@@ -4,14 +4,15 @@
 // sanitize, bloom, colour grade, flash, chromatic pulse, grain, vignette), the FX library every cue lands in, the camera rig
 // (orbit, zoom limits, shake, cinematic blend, keep-out-of-the-boss, occluder fade), the procedural world helpers, the
 // telegraph decal and bullet shaders, the warm-up that compiles every shader before a fight, and the freeze log.
-// Heroes are Threshold's models (heroes.js). What is Axiom's own: turning snapshots into hazards, bullets, heroes and
-// bodies, routing cues (with the screen-only ones kept for the player they belong to), and the Training Dummy's ring.
-// Pentimento's arena, paint and body are still simple stand-ins here (the next step ports Threshold's studio).
+// Heroes are Threshold's models (heroes.js). Pentimento's studio, paint canvas, lay figure, roller, seam and kill are
+// Threshold's too (atelier-look.js, driven by atelier.js). What is Axiom's own: turning snapshots into hazards, bullets,
+// heroes and bodies, routing cues (with the screen-only ones kept for the player they belong to), and the Training Dummy's ring.
 import {
   THREE, G, Input, Game, Hz as HzHook, Co, FX, Cam, W, Post, Warm, Hitch, scene, camera, renderer,
   HZ_VERT, HZ_FRAG, BUL_V, BUL_F, frame as lookFrame, hitstop as lookHitstop,
 } from './look.js';
 import { buildHero, HeroClock } from './heroes.js';
+import { AtelierView, ATELIER_POST, ATELIER_NM_POST } from './atelier.js';
 
 const TAU = Math.PI * 2, PI = Math.PI, V3 = THREE.Vector3;
 const lerp = (a, b, t) => a + (b - a) * t, clamp = (v, a, b) => v < a ? a : v > b ? b : v, sat = (v) => clamp(v, 0, 1);
@@ -19,14 +20,11 @@ const smooth = (t) => { t = sat(t); return t * t * (3 - 2 * t); };
 const lerpAng = (a, b, t) => { let d = (b - a) % TAU; if (d > PI) d -= TAU; if (d < -PI) d += TAU; return a + d * t; };
 export const PIG = [0xffffff, 0xe23a2e, 0xf2c218, 0xf08a1e, 0x2a5fe0, 0x8a3cd0, 0x2aa858, 0x5c4332];
 export const PIG_NAME = ['clean', 'red', 'yellow', 'orange', 'blue', 'purple', 'green', 'mud'];
-const css = (n) => '#' + (n >>> 0).toString(16).padStart(6, '0');
-const R_PAINT = 20, CANVAS_N = 1024;
 
-// Per-encounter grade (Threshold's def.post) and camera. Pentimento's are Threshold's numbers (38_boss_atelier.js POST).
-const ATELIER_POST = { bloom: 0.22, threshold: 0.97, radius: 0.6, exposure: 0.92, vig: 0.7, sat: 1.08, contrast: 1.04, tint: [1.0, 1.0, 1.0] };
+// Per-encounter grade (Threshold's def.post) and camera. Pentimento's are Threshold's own (38_boss_atelier.js POST).
 const LOOKS = {
   dummy: { post: { bloom: 0.5, threshold: 0.86, radius: 0.55, exposure: 1.12, sat: 1.06, vig: 0.85, contrast: 1.05, tint: [1.02, 1.0, 0.97] }, aimY: 1.8 },
-  atelier: { post: ATELIER_POST, nmPost: Object.assign({}, ATELIER_POST, { tint: [1.02, 1.0, 0.98], sat: 1.12 }), aimY: 3.6 },
+  atelier: { post: ATELIER_POST, nmPost: ATELIER_NM_POST, aimY: 3.6, camDist: 17, camPitch: 0.55 },
 };
 // cues that only make sense on one player's screen: shown only when that player is you (or when no player raised them)
 const OWN = { 'fx.shake': 1, 'fx.flash': 1, 'fx.kick': 1, 'fx.num': 3, hitstop: 2, 'ui.hurtFlash': 1, 'ui.slotFlash': 1 };
@@ -58,10 +56,12 @@ export class View {
     this.decals.clear(); this.bullets.clear();
     this.world = new THREE.Group(); this.world.name = 'arena'; scene.add(this.world);
     scene.fog = null; scene.environment = null; scene.background = new THREE.Color(0x05060a);
-    this.paint = null; this.dish = this.half = this.roller = null; const R = s.arena.radius;
-    if (id === 'atelier') this.buildAtelier(R); else this.buildRing(R);
+    this.atl = null; const R = s.arena.radius;
+    if (id === 'atelier') this.atl = new AtelierView(this.world, !!s.nm);
+    else this.buildRing(R);
     const L = LOOKS[id] || LOOKS.dummy; Post.set((s.nm && L.nmPost) || L.post || {}); Cam.minDist = 4; Cam.maxDist = 26;
     this.lookDef = L; Game.def = { id };
+    if (this.atl && this.pendingCatch) { this.atl.catchUp(this.pendingCatch, s.boss.pub, !!s.nm); this.pendingCatch = null; } // after the encounter's base grade
     // one hidden model of every class stays in the scene: the warm-up compiles its shaders and lights, and it keeps them
     // alive, so a player who joins or changes class mid-fight never compiles a shader
     if (!this.spares.length) for (const c of this.catalog.classes) { const m = buildHero(c); m.group.visible = false; m.group.position.set(0, -50, 0); scene.add(m.group); this.spares.push(m); }
@@ -104,51 +104,6 @@ export class View {
     g.add(W.motes({ n: 260, box: [2 * R + 16, 12, 2 * R + 16], color: 0xff8a3a, size: 0.07, vel: [0.4, 0.7, 0.1], sway: 0.8, center: [0, 6, 0], mult: 2.2 }));
     g.add(W.motes({ n: 200, box: [2 * R + 30, 10, 2 * R + 30], color: 0xc8b8a8, size: 0.05, vel: [0.2, 0.05, 0.1], sway: 1.2, center: [0, 5, 0], alpha: 0.5 }));
   }
-  buildAtelier(R) { // a pale canvas tondo in a dark studio; the floor keeps the paint (drawn from 'atelier.lay' cues). A stand-in.
-    const g = this.world;
-    scene.background = new THREE.Color(0x15130f); scene.fog = new THREE.Fog(0x15130f, 45, 140);
-    W.hemi(g, 0xdfe6ff, 0x2a2420, 1.15);
-    W.sun(g, { color: 0xfff2e0, intensity: 2.3, dir: [-0.45, 0.85, 0.35], size: R + 6 });
-    const c = document.createElement('canvas'); c.width = c.height = CANVAS_N;
-    const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 8;
-    this.paint = { c, x: c.getContext('2d'), tex, strokes: [], dirty: true, neg: false, t: 0 };
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(2 * R_PAINT, 2 * R_PAINT), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.75 }));
-    floor.rotation.x = -PI / 2; floor.receiveShadow = true; g.add(floor);
-    const frame = new THREE.Mesh(new THREE.TorusGeometry(R + 0.25, 0.3, 10, 120), new THREE.MeshStandardMaterial({ color: 0x8a6a3a, roughness: 0.45, metalness: 0.5 })); frame.rotation.x = PI / 2; frame.position.y = 0.12; frame.castShadow = true; g.add(frame);
-    const boards = new THREE.Mesh(new THREE.RingGeometry(R + 0.5, R + 40, 96), new THREE.MeshStandardMaterial({ color: 0x3a2c20, roughness: 0.9 })); boards.rotation.x = -PI / 2; boards.position.y = -0.03; g.add(boards);
-    for (let i = 0; i < 6; i++) { // easels with blank canvases around the room
-      const a = i / 6 * TAU + 0.5, e = new THREE.Group(), wood = new THREE.MeshStandardMaterial({ color: 0x6a4a2a, roughness: 0.8 });
-      for (const [x, rz] of [[-0.7, 0.12], [0.7, -0.12]]) { const leg = new THREE.Mesh(new THREE.BoxGeometry(0.12, 5, 0.12), wood); leg.position.set(x, 2.4, 0); leg.rotation.z = rz; e.add(leg); }
-      const cv = new THREE.Mesh(new THREE.BoxGeometry(2.6, 3.2, 0.08), new THREE.MeshStandardMaterial({ color: 0xe8e0cc, roughness: 0.9 })); cv.position.set(0, 3.2, 0.1); e.add(cv);
-      e.position.set(Math.sin(a) * (R + 5), 0, Math.cos(a) * (R + 5)); e.rotation.y = a + PI; e.traverse((o) => { o.castShadow = true; }); g.add(e);
-    }
-    const dish = this.dish = new THREE.Group();
-    const rim = new THREE.Mesh(new THREE.TorusGeometry(2.5, 0.12, 8, 48), new THREE.MeshStandardMaterial({ color: 0xc8d8e0, roughness: 0.2, metalness: 0.3 })); rim.rotation.x = PI / 2; rim.position.y = 0.1; dish.add(rim);
-    const water = new THREE.Mesh(new THREE.CircleGeometry(2.45, 48), new THREE.MeshStandardMaterial({ color: 0x8fd0ee, roughness: 0.05, metalness: 0.1, transparent: true, opacity: 0.8, emissive: 0x16384a })); water.rotation.x = -PI / 2; water.position.y = 0.06; dish.add(water);
-    g.add(dish);
-    const half = this.half = new THREE.Mesh(new THREE.CircleGeometry(R, 64, -PI, PI), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.62, depthWrite: false })); half.rotation.x = -PI / 2; half.position.y = 0.03; half.visible = false;
-    const hg = this.halfG = new THREE.Group(); hg.add(half); g.add(hg);
-    const roller = this.roller = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 12, 20), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6 })); roller.visible = false; roller.castShadow = true; g.add(roller);
-  }
-  lay(sh) { if (this.paint) { this.paint.strokes.push(sh); if (this.paint.strokes.length > 520) this.paint.strokes.shift(); this.paint.dirty = true; } }
-  drawPaint(ft, neg) {
-    const P = this.paint; if (!P) return;
-    P.t -= 1; if (!P.dirty && P.t > 0 && P.neg === neg) return; P.dirty = false; P.t = 15; P.neg = neg; // repaint on new paint, and every 15 frames as paint dries
-    const x = P.x, U = CANVAS_N / (2 * R_PAINT), N = CANVAS_N;
-    x.fillStyle = neg ? '#1b1a20' : '#2b241c'; x.fillRect(0, 0, N, N);
-    x.save(); x.beginPath(); x.arc(N / 2, N / 2, (R_PAINT - 0.25) * U, 0, TAU); x.clip();
-    x.fillStyle = neg ? '#141419' : '#ebe4d4'; x.fillRect(0, 0, N, N);
-    x.globalAlpha = neg ? 0.05 : 0.08; x.strokeStyle = neg ? '#fff' : '#6a5e4c'; x.lineWidth = 1; x.beginPath(); for (let i = 0; i < N; i += 6) { x.moveTo(i, 0); x.lineTo(i, N); x.moveTo(0, i); x.lineTo(N, i); } x.stroke(); x.globalAlpha = 1;
-    for (const sh of P.strokes) {
-      const wet = sh.m && ft - sh.t0 < 20, col = sh.m ? PIG[sh.m] : (neg ? 0x141419 : 0xebe4d4);
-      x.fillStyle = css(col); x.globalAlpha = sh.m ? (wet ? 0.95 : 0.42) : 1;
-      if (sh.t === 'c') { x.beginPath(); x.arc((sh.x + R_PAINT) * U, (sh.z + R_PAINT) * U, sh.r * U, 0, TAU); x.fill(); }
-      else { x.save(); x.translate((sh.x + R_PAINT) * U, (sh.z + R_PAINT) * U); x.rotate(Math.atan2(Math.cos(sh.dir), Math.sin(sh.dir))); x.fillRect(0, -sh.w / 2 * U, sh.len * U, sh.w * U); x.restore(); }
-      if (wet) { x.globalAlpha = 0.25; x.strokeStyle = '#ffffff'; x.lineWidth = 2; if (sh.t === 'c') { x.beginPath(); x.arc((sh.x + R_PAINT) * U - sh.r * U * 0.3, (sh.z + R_PAINT) * U - sh.r * U * 0.3, sh.r * U * 0.45, PI, PI * 1.5); x.stroke(); } }
-    }
-    x.restore(); x.globalAlpha = 1; P.tex.needsUpdate = true;
-  }
-
   // ---------------- bodies
   heroFor(p) {
     let h = this.heroes.get(p.id);
@@ -156,19 +111,18 @@ export class View {
     if (!h) {
       const cls = this.catalog.classes.find((c) => c.id === p.cls) || { id: p.cls, look: { armor: 0x555566, cloth: 0x333344, glow: 0xffffff } };
       const m = buildHero(cls), g = new THREE.Group(); g.add(m.group);
-      // the paint you wear (Pentimento) shows as a ring at your feet
-      const ring = new THREE.Mesh(new THREE.RingGeometry(0.62, 0.78, 32), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, depthWrite: false })); ring.rotation.x = -PI / 2; ring.position.y = 0.04; ring.visible = false; g.add(ring);
-      h = { g, m, cls: p.cls, color: cls.color, ring, x: p.x, z: p.z, y: p.y, f: p.facing, deathT: 0 }; this.heroes.set(p.id, h); scene.add(g);
+      h = { g, m, cls: p.cls, color: cls.color, x: p.x, z: p.z, y: p.y, f: p.facing, deathT: 0 }; this.heroes.set(p.id, h); scene.add(g);
     }
     return h;
   }
   entFor(e, bossId) {
     let o = this.ents.get(e.id); if (o) return o;
+    if (e.boss && this.atl) { o = { g: this.atl.group, boss: true, own: true }; this.ents.set(e.id, o); return o; } // Threshold's lay figure, built with the studio
     const g = new THREE.Group(); o = { g, boss: e.boss };
-    if (e.boss && bossId === 'atelier') Object.assign(o, layFigure(g));
-    else if (e.boss && bossId === 'dummy') Object.assign(o, dummyModel(g));
+    if (e.boss && bossId === 'dummy') Object.assign(o, dummyModel(g));
     else if (e.boss) { const m = new THREE.Mesh(new THREE.CapsuleGeometry(e.radius * 0.7, e.radius * 2, 6, 12), new THREE.MeshStandardMaterial({ color: 0xbbbbbb })); m.position.y = e.radius * 1.7; g.add(m); }
-    else { // an add (Pentimento's Blots): a glossy drop of paint
+    else if (this.atl) Object.assign(o, this.atl.blot(g, e)); // Pentimento's Blots
+    else { // an add: a glossy drop
       const col = typeof e.color === 'number' ? e.color : 0xcc3344, m = new THREE.Mesh(new THREE.SphereGeometry(e.radius, 20, 14), new THREE.MeshStandardMaterial({ color: col, roughness: 0.15, metalness: 0.05, emissive: col, emissiveIntensity: 0.15 }));
       m.scale.y = 0.7; m.position.y = e.radius * 0.65; m.castShadow = true; g.add(m); o.blob = m;
     }
@@ -184,8 +138,6 @@ export class View {
     const s = b; this.setArena(s);
     const pub = s.boss.pub || {};
     G.state = s.state === 'intro' || s.state === 'fight' || s.state === 'win' || s.state === 'dead' ? s.state : 'fight'; G.ft = s.t; G.nightmare = !!s.nm;
-    if (this.paint) this.drawPaint(s.t, !!pub.neg);
-    if (s.boss.id === 'atelier') this.drawAtelierPub(pub, s);
     // players
     const seen = new Set(); let mine = null;
     for (const pb of s.players) {
@@ -200,8 +152,6 @@ export class View {
           res: p2.res, resMax: p2.resMax, shield: p2.shield || 0, shieldMax: p2.shieldMax || 1, hasBuff: (id) => p2.buffs.some((q) => q.id === id && q.t > 0), pose: null, dead: false };
         try { h.m.update(dts, stand); } catch (e) { /* a model that wants more of the stand-in: keep drawing */ }
       } else { h.deathT += dts; const kk = Math.min(1, h.deathT / 0.7); h.m.body.rotation.x = -kk * 1.45; h.m.body.position.y = -kk * 0.1; } // Threshold's fall
-      const w = pub.pw && pub.pw[pb.id] ? pub.pw[pb.id].wear : 0;
-      h.ring.visible = !!w; if (w) { h.ring.material.opacity = 0.85; h.ring.material.color.setHex(PIG[w]); }
     }
     for (const [id, h] of this.heroes) if (!seen.has(id)) { scene.remove(h.g); disposeWorld(h.g); this.heroes.delete(id); }
     // hostile bodies
@@ -215,16 +165,17 @@ export class View {
       if (o.update) o.update(dts, eb, pub, s);
       if (o.blob) o.blob.scale.set(1 + Math.sin(HeroClock.now * 7 + eb.id) * 0.06, 0.7 + Math.cos(HeroClock.now * 6 + eb.id) * 0.06, 1);
     }
-    for (const [id, o] of this.ents) if (!live.has(id)) { scene.remove(o.g); disposeWorld(o.g); this.ents.delete(id); }
+    for (const [id, o] of this.ents) if (!live.has(id)) { if (!o.own) { scene.remove(o.g); disposeWorld(o.g); } this.ents.delete(id); }
     // your target: Threshold's turning ring in your class colour
     const tgt = input && input.targetId !== null && input.targetId !== undefined ? this.ents.get(input.targetId) : null;
     this.tring.visible = !!(tgt && mine && mine.p.alive);
     if (this.tring.visible) { this.tring.material.color.set(mine.h.color || '#ffffff').multiplyScalar(1.1); this.tring.scale.setScalar((tgt.radius || 1) + 0.25); this.tring.position.set(tgt.x, 0.07, tgt.z); this.tring.rotation.z += dt * 0.6; }
+    // what the camera follows (Threshold's Cam reads G.player, G.boss, G.arena)
+    let focus = mine ? mine.h : null, focusId = mine ? you : null;
+    if (!focus) { for (const [id, h] of this.heroes) { const p = s.players.find((q) => q.id === id); if (p && p.alive) { focus = h; focusId = id; break; } } }
+    if (this.atl) { const fp = focus ? s.players.find((q) => q.id === focusId) : null; this.atl.update(dts, s, a, k, bossO ? { x: bossO.x, z: bossO.z, facing: bossO.g.rotation.y } : null, focus ? { id: focusId, pos: new V3(focus.x, focus.y, focus.z), alive: !fp || fp.alive } : null, you, this.heroes); }
     this.decals.sync(a, b, k, pub);
     this.bullets.sync(a, b, k);
-    // what the camera follows (Threshold's Cam reads G.player, G.boss, G.arena)
-    let focus = mine ? mine.h : null;
-    if (!focus) { for (const [id, h] of this.heroes) { const p = s.players.find((q) => q.id === id); if (p && p.alive) { focus = h; break; } } }
     if (focus) { this.me.pos.set(focus.x, focus.y, focus.z); this.me.facing = focus.f; this.me.alive = true; G.player = this.me; }
     else G.player = null;
     if (bossO) { const F = this.bossF; F.pos.copy(bossO.g.position); F.radius = bossO.radius || 1; F.group = bossO.g; F.def.aimY = this.lookDef.aimY || 2.5; F.phase = s.boss.phase; G.boss = F; } else G.boss = null;
@@ -242,13 +193,12 @@ export class View {
     lookFrame(dt);
     document.body.classList.toggle('cine', Cam.cineW > 0.5);
   }
-  drawAtelierPub(pub, s) {
-    if (this.dish && pub.wash) { this.dish.position.set(pub.wash.x, 0, pub.wash.z); this.dish.scale.setScalar(pub.wash.r / 2.5); }
-    if (this.half) { this.half.visible = !!pub.split; if (pub.split) this.halfG.rotation.y = pub.lineA - PI / 2; } // the black half: x cos A - z sin A < 0
-    const q = pub.roll; this.roller.visible = !!q && q.s > -22.5;
-    if (q) { const fx = Math.sin(q.a), fz = Math.cos(q.a); this.roller.position.set(q.cx + fx * q.s, 0.7, q.cz + fz * q.s); this.roller.rotation.set(0, q.a, PI / 2); this.roller.material.color.setHex(PIG[q.m]); }
-    scene.background.setHex(pub.neg ? 0x08080c : 0x15130f);
-  }
+  // a new fight: everything is built again (a second Pentimento must not keep the first one's paint)
+  reset() { this.arenaId = null; this.pendingCatch = null; }
+  // the catch-up for a newcomer (the server sends it after 'start'): applied once the arena is built
+  catchUp(m, pub) { if (m.boss !== 'atelier') return; if (this.atl && this.arenaId === 'atelier') this.atl.catchUp(m, pub, !!m.nm); else this.pendingCatch = m; }
+  // the camera an encounter opens with (Threshold's arena camDist / camPitch)
+  camFor(id) { const L = LOOKS[id] || {}; return { dist: L.camDist || (id === 'dummy' ? 11 : 14), pitch: L.camPitch === undefined ? 0.36 : L.camPitch }; }
   // camera control for tools: yaw relative to your hero's facing, pitch, distance
   setCam(o) { if (o.yaw !== undefined) Cam.yaw = this.me.facing + o.yaw; if (o.pitch !== undefined) Cam.pitch = o.pitch; if (o.dist !== undefined) Cam.tDist = Cam.dist = o.dist; }
   info() { return { programs: renderer.info.programs.length, warmMs: this.warmMs, compiledInFight: this.compiled.slice(), late: Hitch.count.late, errors: G.errors.slice(0, 3) }; }
@@ -260,7 +210,8 @@ export class View {
     if (ow !== undefined) { const who = args[ow] !== undefined && args[ow] !== null ? args[ow] : actor; if (who !== null && who !== undefined && who !== you) return; }
     if (name.startsWith('fx.')) return fxCue(name.slice(3), args);
     switch (name) {
-      case 'atelier.lay': return this.lay(args[0]);
+      case 'atelier.lay': if (this.atl) this.atl.lay(args[0]); return;
+      case 'fight.win': if (this.atl) this.atl.kill(!!G.nightmare, (kk, d) => { this.slowK = kk; this.slowT = d; lookHitstop(kk, d); }); return;
       case 'hero.swing': { const h = this.heroes.get(args[0]); if (h) h.m.swing(args[1], args[2]); return; }
       case 'hitstop': { const kk = args[0] === undefined ? 0.25 : args[0], d = args[1] === undefined ? 0.1 : args[1]; this.slowK = kk; this.slowT = d; lookHitstop(kk, d); return; }
       case 'post.lerpTo': Co.start(Post.lerpTo(args[0] || {}, args[1] === undefined ? 2 : args[1]), 'look'); return;
@@ -327,7 +278,7 @@ class Decals {
       else { u.uLen.value = s.len; u.uW.value = s.w; bound = Math.max(s.len, s.w) + 0.3; }
       u.uBound.value = bound; m.scale.setScalar(bound);
       m.position.set(lerp(sa.x, s.x, k), 0.05 + (h.lift || 0), lerp(sa.z, s.z, k)); m.rotation.y = lerpAng(sa.dir || 0, s.dir || 0, k);
-      u.uCol.value.setHex(pub.neg ? 0xf4f4ff : h.color); u.uTime.value = G.now;
+      u.uCol.value.setHex(h.color); u.uTime.value = G.now;
       const alpha = h.alpha === undefined ? 1 : h.alpha;
       if (h.state === 'tele') { const t = ha && ha.state === 'tele' ? lerp(ha.t, h.t, k) : h.t; u.uStyle.value = h.style || 0; u.uProg.value = sat(t / Math.max(h.delay, 1e-3)); u.uFire.value = 0; u.uAlpha.value = alpha; }
       else if (h.state === 'zone') { const zt = ha && ha.state === 'zone' ? lerp(ha.zt || 0, h.zt || 0, k) : (h.zt || 0); u.uStyle.value = h.zoneStyle || 2; u.uProg.value = 1; u.uFire.value = 0; u.uAlpha.value = Math.min(1, (h.dur - zt) * 2) * alpha; }
@@ -367,36 +318,6 @@ class Bullets {
     mesh.count = disc.count = tail.count = n;
     if (n) { mesh.instanceMatrix.needsUpdate = disc.instanceMatrix.needsUpdate = tail.instanceMatrix.needsUpdate = true; mesh.instanceColor.needsUpdate = disc.instanceColor.needsUpdate = tail.instanceColor.needsUpdate = true; }
   }
-}
-
-// ---------------- Pentimento, the lay figure (a stand-in for Threshold's carved model)
-function layFigure(g) {
-  const wood = new THREE.MeshStandardMaterial({ color: 0xb89068, roughness: 0.55, emissive: 0x000000 });
-  const joint = new THREE.MeshStandardMaterial({ color: 0x8a6a48, roughness: 0.5, metalness: 0.2 });
-  const body = new THREE.Group(); g.add(body);
-  const seg = (r, l, x, y, z, rx = 0, rz = 0, m = wood) => { const q = new THREE.Mesh(new THREE.CapsuleGeometry(r, l, 6, 14), m); q.position.set(x, y, z); q.rotation.set(rx, 0, rz); body.add(q); return q; };
-  const ball = (r, x, y, z) => { const q = new THREE.Mesh(new THREE.SphereGeometry(r, 14, 10), joint); q.position.set(x, y, z); body.add(q); return q; };
-  seg(0.34, 1.0, -0.38, 1.0, 0); seg(0.34, 1.0, 0.38, 1.0, 0); ball(0.3, -0.38, 1.85, 0); ball(0.3, 0.38, 1.85, 0);
-  seg(0.62, 0.7, 0, 2.6, 0); seg(0.75, 0.6, 0, 3.6, 0); ball(0.3, 0, 4.3, 0);
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.55, 20, 16), wood); head.scale.set(0.85, 1.1, 0.9); head.position.set(0, 4.95, 0); body.add(head);
-  ball(0.26, -0.95, 3.95, 0); ball(0.26, 0.95, 3.95, 0);
-  seg(0.22, 1.1, -1.15, 3.2, 0, 0, 0.25); const armR = seg(0.22, 1.1, 1.2, 3.3, 0.3, -0.6, -0.2);
-  const brush = new THREE.Group(); brush.position.set(1.5, 2.9, 0.8); body.add(brush);
-  const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.08, 5.2, 8), new THREE.MeshStandardMaterial({ color: 0x5a3a1e, roughness: 0.6 })); handle.rotation.x = 0.9; brush.add(handle);
-  const tip = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.8, 10), new THREE.MeshStandardMaterial({ color: 0xe23a2e, roughness: 0.4 })); tip.position.set(0, 1.55, 2.05); tip.rotation.x = 0.9 + PI; brush.add(tip);
-  const swirl = new THREE.Mesh(new THREE.TorusGeometry(0.85, 0.09, 8, 40), new THREE.MeshStandardMaterial({ color: 0xe23a2e, emissive: 0xe23a2e, emissiveIntensity: 0.4 })); swirl.rotation.x = PI / 2; body.add(swirl);
-  let t = 0;
-  return {
-    update(dt, e, pub) {
-      t += dt; const need = pub.split && pub.call ? pub.call.col : pub.col; const c = PIG[need || 1] || 0xffffff;
-      tip.material.color.setHex(c); swirl.material.color.setHex(c); swirl.material.emissive.setHex(c);
-      const tone = pub.split && pub.call ? (pub.call.tone === 'w' ? 0xf4efe6 : 0x1c1c22) : pub.neg ? 0x3a3a44 : 0xb89068;
-      wood.color.setHex(tone); wood.emissive.setHex(pub.flood ? 0x404040 : 0x000000);
-      swirl.position.y = 0.6 + ((t * 0.8) % 1) * ((pub.top !== undefined ? pub.top : 7.5) * 0.6);
-      body.rotation.x = pub.down > 0 ? -0.55 : 0; body.position.y = pub.down > 0 ? -0.6 : Math.sin(t * 1.3) * 0.05;
-      brush.rotation.z = (pub.swing || 0) * -1.6; armR.rotation.z = -0.2 - (pub.swing || 0) * 0.9;
-    },
-  };
 }
 
 // ---------------- the training dummy: a post, a stuffed sack in leather straps, a crossbar, a painted target

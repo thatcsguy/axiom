@@ -422,6 +422,9 @@ import { Bot } from '../bot.js';
       ],
     },
     nmTest: { wantWear, wantSide, sideAt, route: (S, ...a) => route(S, ...a), SEAM_W, SIT_PER_STEP, stepOf: finStepOf },
+    // the picture a newcomer has missed (Axiom): every stroke still on the canvas, oldest first (baked: those past the 110
+    // newest, which Threshold's floor keeps in its bitmap). Read only; the server sends it once to a player who joins mid-fight.
+    catchup(b) { const S = b.state, cp = (sh) => Object.assign({}, sh); return { baked: S.baked.map(cp), strokes: S.strokes.map(cp) }; },
     update(b, dt) {
       const S = b.state, fight = G.state === 'fight';
       if (S.down > 0) S.down -= dt; S.washT = (S.washT || 0) + dt; if (S.washT > 18 && !(S.split && S.holdWash > G.ft)) { S.washT = 0; moveWash(S); } // finale: the dish holds still while a Critique it answers is cast

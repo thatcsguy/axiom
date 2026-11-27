@@ -26,6 +26,7 @@ export class Net {
       if (m.t === 'snap') return this.onSnap(m);
       if (m.t === 'pong') { const r = (performance.now() - m.c) / 1000; this.rtt = this.rtt ? this.rtt * 0.7 + r * 0.3 : r; return; }
       if (m.t === 'start') { this.snaps = []; this.cueQ = []; this.clock = null; if (m.tickHz) this.hz = m.tickHz; }
+      if (m.t === 'catchup') this.cueQ = this.cueQ.filter((c) => !(c.name === 'atelier.lay' && c.tick <= m.tick)); // already in the catch-up
       this.emit(m.t, m);
     };
   }

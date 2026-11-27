@@ -4,7 +4,7 @@
 // Esc for the menu.
 import { Net, serverUrl, INTERP, SELF_INTERP } from './net.js';
 import { View, PIG, PIG_NAME } from './view.js';
-import { ICON, scPipCls } from './look.js';
+import { ICON, scPipCls, G as LookG } from './look.js';
 
 const QS = new URLSearchParams(location.search), $ = (s) => document.querySelector(s);
 const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -16,7 +16,7 @@ const S = { catalog: null, lobby: null, me: null, you: null, enc: null, phase: '
 let name = QS.get('name') || store.get('name', '');
 if (!name) { name = 'Player ' + Math.floor(100 + Math.random() * 900); }
 const net = new Net(serverUrl(QS), { name, cls: store.get('cls', 'duskblade') });
-window.__axiom = { net, S }; // for tests and the console
+window.__axiom = { net, S, G: LookG }; // for tests and the console (G: the drawing's clocks)
 
 // ---------------- input
 const input = { keys: new Set(), l: false, r: false, lookX: 0, lookY: 0, zoom: 0, press: [], jump: false, cycle: 0, target: undefined, targetId: null, downX: 0, downY: 0, moved: 0 };
@@ -68,8 +68,9 @@ net.on('open', () => { S.phase = 'lobby'; render(); });
 net.on('close', () => { S.phase = 'offline'; render(); if (!net.closedByUs) setTimeout(() => location.reload(), 4000); });
 net.on('welcome', (m) => { S.catalog = m; S.me = m.id; if (!S.view) { S.view = new View(cv, m); S.view.onUi = (n, a) => { if (n === 'ui.hurtFlash') hurtA = Math.min(1, hurtA + 0.25 + (a[0] || 0) * 1.6); }; } render(); });
 net.on('lobby', (m) => { S.lobby = m; if (m.phase === 'lobby') { S.phase = 'lobby'; S.you = null; S.menu = false; } render(); });
-net.on('start', (m) => { S.phase = 'fight'; S.enc = m.enc; S.you = m.you; S.end = null; S.camReset = true; hudKey = ''; banner(''); render(); });
+net.on('start', (m) => { if (S.view) S.view.reset(); S.phase = 'fight'; S.enc = m.enc; S.you = m.you; S.end = null; S.camReset = true; hudKey = ''; banner(''); render(); });
 net.on('end', (m) => { S.end = m; render(); });
+net.on('catchup', (m) => { if (S.view) S.view.catchUp(m, net.latest && net.latest.boss && net.latest.boss.pub); });
 net.on('note', (m) => toast(m.text));
 
 // ---------------- the lobby (and the end screen, the menu)
@@ -225,9 +226,9 @@ function loop(now) {
   const v = S.view; if (!v || S.phase !== 'fight' || net.clock === null) return;
   const hz = net.hz, tRender = net.clock - INTERP * hz, A = net.at(tRender), B = net.at(net.clock - SELF_INTERP * hz);
   if (!A) return;
-  if (S.camReset) { const me = A.b.players.find((p) => p.id === S.you); v.cam.yaw = me ? me.facing : Math.PI; v.cam.pitch = 0.36; v.cam.tDist = v.cam.dist = A.b.boss.id === 'dummy' ? 11 : 14; S.camReset = false; }
+  if (S.camReset) { const me = A.b.players.find((p) => p.id === S.you), c = v.camFor(A.b.boss.id); v.cam.yaw = me ? me.facing : Math.PI; v.cam.pitch = c.pitch; v.cam.tDist = v.cam.dist = c.dist; S.camReset = false; }
   for (const c of net.dueCues(tRender)) {
-    if (c.name === 'fight.win') banner('Victory', 'win');
+    if (c.name === 'fight.win') { banner('Victory', 'win'); v.cue(c.name, c.args, c.actor, S.you); }
     else if (c.name === 'fight.dead') banner('Wiped', 'dead');
     else if (c.name === 'fight.down') { const p = net.latest && net.latest.players.find((q) => q.id === c.args[0]); if (p) toast(`${p.name || 'A player'} is down (${c.args[1]}).`); }
     else v.cue(c.name, c.args, c.actor, S.you);

@@ -59,8 +59,20 @@ client described below.
   tick's cues. Loopback round trip under 1 ms, snapshot spacing p99 37 ms.
 - **Client**: draws 100 ms in the past (your own character 50 ms), blending the two snapshots around that moment, and
   fires cues when the drawing reaches their tick. Threshold's hero models and animation code are imported unchanged
-  (`tools/import-heroes.js`). Pentimento's arena, paint canvas, dish, half-disc and roller are simple stand-ins drawn
-  from cues and `pub`; the boss is a jointed lay figure, not Threshold's model.
+  (`tools/import-heroes.js`).
+- **Pentimento's look is Threshold's own**, imported unchanged by `tools/import-atelier.js` into `client/src/atelier-look.js`
+  (the view half of `38_boss_atelier.js`: the studio, the floor canvas with its stroke stamping and budgeted repaint job,
+  every material and shader, the carved lay figure and its animation, the dish, aura, roller, Blots, varnish shell, contact
+  shadows, the Nightmare finale's seam, split floor and wall, body tone and swirl). `client/src/atelier.js` drives it: each
+  frame it fills Threshold's boss state from `pub` (blending the seam's angle, the roller and the swirl between snapshots),
+  lays each `atelier.lay` cue, dries paint on the fight clock, and calls Threshold's `lookUpdate`. Axiom's additions:
+  everyone's worn paint shows as Threshold's aura at their feet; the kill (Threshold's default kill on Normal, the
+  "painting" kill on Nightmare) plays on the client from the `fight.win` cue (the server's `win` state is the lock); the
+  varnish shell shows only while your side protects him (in Threshold that line sits inside a comment, so the shell shows
+  all fight long: a Threshold bug, not carried over).
+- **Catch-up**: a player who arrives mid-fight (a watcher) gets one `catchup` message with every stroke still on the canvas
+  (`def.catchup(b)` in the sim, read only); the client lays them in one go and sets the grade of the phase now playing.
+  Every new fight rebuilds the arena (a second Pentimento starts on a clean canvas).
 - **Threshold's look** is imported unchanged by `tools/import-look.js` into `client/src/look.js` (and its HUD styles into
   `hud.css`): the shader math guard, the renderer and quality table, the post chain (NaN sanitize, bloom, colour grade,
   vignette, grain, flash, pulse, `Post.lerpTo` regrades), the whole FX library (GPU particles, rings, pillars, beams,
@@ -79,7 +91,11 @@ client described below.
   shield, class pips, cast bar), the hotbar with its icons, cooldown sweeps, charges, ready and active marks, buffs, the hurt
   vignette. Party frames and the dummy meter are Axiom's own.
 - **Screenshots**: `tools/shots.js` drives the real client against a real server (dummy solo for each class, a dummy party
-  seen from one player, Pentimento intro and fight). In the cloud it renders with SwiftShader; `TH_GPU=1` uses the installed
+  seen from one player, Pentimento: intro, Colour, the Negative, the kill, the Nightmare's colour, Chiaroscuro and its
+  last ramp step, the varnish last blow, the Nightmare kill, and a watcher arriving 30 s in). `tools/atelier-compare.js`
+  captures the same Pentimento moments in Threshold and Axiom from one fixed camera and writes them side by side.
+  Both start fights through test hooks that only a server started with `test: true` accepts (start at a phase, god mode,
+  skip the intro, and the `test` message: boss health, finale sitting, fight clock, kill). In the cloud it renders with SwiftShader; `TH_GPU=1` uses the installed
   Chrome on the graphics card. The GPU run has not been done yet.
 - **Tests**: `test/server.test.js` runs the real server and real sockets: lobby, the dummy flow, four autopilots killing
   Pentimento with a spectator joining late, and "brain" fake clients that play from snapshots only. The client was
@@ -90,7 +106,6 @@ client described below.
 - **No client prediction.** Your own character moves when the server says so: fine on a LAN, sluggish over 100 ms+.
   Prediction needs the same trig on client and server (see below) and is plan step 4.
 - **Only Duskblade and Stormcaller** are offered in the lobby. Ashwarden and Hexslinger are still in the sim.
-- **Pentimento's look** is a stand-in (arena, boss model, paint canvas, Nightmare negative look): the next step.
 - **No sound or music.** Sound cues arrive and are dropped.
 - **No quality setting in the menu.** `?quality=high|med|low` picks Threshold's quality table entry.
 - **JSON snapshots, full every tick.** Deltas or a binary format would cut bandwidth about tenfold when it matters.
@@ -113,4 +128,4 @@ Nightmare retune (PR #77).
 1. Play it with real people over the internet (Fly.io or Render) and collect what feels wrong: input delay, camera,
    readability of Pentimento's paint at a distance.
 2. Client prediction for your own movement and instant skills (plan step 4), with deterministic trig first.
-3. Pentimento's look and sound from Threshold, then mechanic tweaks for parties.
+3. Pentimento's sound from Threshold, then mechanic tweaks for parties.

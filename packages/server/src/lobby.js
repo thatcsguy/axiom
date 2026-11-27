@@ -45,7 +45,7 @@ export class Room {
     this.send(m, Object.assign({ t: 'welcome', v: PROTOCOL_VERSION, id: m.id, room: this.name, tickHz: TICK_HZ }, catalog()));
     if (this.phase === 'fight') {
       if (this.enc.training && this.members.filter((q) => q.inFight).length < MAX_TRAINING) this.walkIn(m);
-      else { this.send(m, { t: 'start', enc: this.enc, you: null, tickHz: TICK_HZ }); this.note(m, `A fight is under way (${this.enc.name}). You are watching; you will be in the lobby when it ends.`); }
+      else { this.send(m, { t: 'start', enc: this.enc, you: null, tickHz: TICK_HZ }); this.post({ t: 'catchup', key: m.id }); this.note(m, `A fight is under way (${this.enc.name}). You are watching; you will be in the lobby when it ends.`); }
     }
     this.sync(); return true;
   }
@@ -71,7 +71,8 @@ export class Room {
         if (this.enc.training && m.inFight) { m.cls = msg.cls; this.post({ t: 'swap', key: m.id, cls: msg.cls }); return this.sync(); }
         return this.note(m, 'You can change class in the lobby, or on the training dummy.');
       }
-      case 'start': return this.start(m, msg.boss, !!msg.nm);
+      case 'start': return this.start(m, msg.boss, !!msg.nm, this.server.test ? msg : null);
+      case 'test': if (this.server.test && this.phase === 'fight') this.post({ t: 'test', o: msg.o }); return; // tools only
       case 'end': if (this.phase === 'fight') { this.stopFight(); this.broadcast({ t: 'end', result: 'ended', by: m.name, ft: 0, stats: [] }); this.backToLobby(); } return;
       case 'auto': { // the autopilot plays your character; asked in the lobby, it plays from the pull
         m.auto = !!msg.on; if (this.phase === 'fight' && m.inFight) this.post({ t: 'auto', key: m.id, on: m.auto });
@@ -89,7 +90,7 @@ export class Room {
   }
 
   // ---- encounters
-  start(m, boss, nm) {
+  start(m, boss, nm, test) {
     if (this.phase !== 'lobby') return this.note(m, 'An encounter is already running.');
     const def = ENCOUNTERS.includes(boss) && G.bosses.find((d) => d.id === boss); if (!def) return this.note(m, 'Unknown encounter.');
     const cap = def.training ? MAX_TRAINING : MAX_PARTY, party = this.members.slice(0, cap);
@@ -99,7 +100,7 @@ export class Room {
     const w = this.worker = new Worker(WORKER);
     w.on('message', (e) => this.onWorker(w, e));
     w.on('error', (e) => { console.error('fight worker', e); if (this.worker === w) { this.broadcast({ t: 'note', text: 'The fight crashed on the server.' }); this.stopFight(); this.backToLobby(); } });
-    w.postMessage({ t: 'start', speed: this.server.speed, setup: { boss, nm: this.enc.nm, intro: !def.training && this.server.intro, players: party.map((q) => ({ key: q.id, cls: q.cls, name: q.name, bot: q.bot || q.auto })) }, seed: this.server.seed });
+    w.postMessage({ t: 'start', speed: this.server.speed, setup: { boss, nm: this.enc.nm, intro: !def.training && this.server.intro && !(test && test.skipIntro), phase: test ? test.phase | 0 : 0, godMode: !!(test && test.god), players: party.map((q) => ({ key: q.id, cls: q.cls, name: q.name, bot: q.bot || q.auto })) }, seed: this.server.seed });
     if (this.members.length > party.length) for (const q of this.members) if (!q.inFight) this.note(q, `A boss takes ${cap} players: you are watching this one.`);
     this.sync();
   }
@@ -113,6 +114,7 @@ export class Room {
     } else if (e.t === 'joined') {
       const m = this.members.find((q) => q.id === e.key); if (!m) return; m.sim = e.you;
       this.send(m, { t: 'start', enc: this.enc, you: e.you, tickHz: TICK_HZ }); this.sync();
+    } else if (e.t === 'catchup') { const m = this.members.find((q) => q.id === e.key); if (m) this.send(m, e.data);
     } else if (e.t === 'end') {
       if (e.errors && e.errors.length) console.error('fight errors', e.errors);
       this.broadcast({ t: 'end', result: e.result, ft: e.ft, stats: e.stats.map((s) => Object.assign(s, { name: s.name || (this.members.find((q) => q.sim === s.id) || {}).name || '' })) });

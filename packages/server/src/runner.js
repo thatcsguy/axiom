@@ -20,7 +20,9 @@ export class FightRunner {
     this.inp = new Map(); this.ids = new Map(); this.cues = []; this.ended = false; this.endT = 0;
   }
   start() {
-    View.setSink((name, args) => { if (SEND_CUE(name)) this.cues.push([name, args]); });
+    // a cue raised while a player acts (their skill, their update) carries that player's id third, so each client can keep
+    // the screen-only ones (flash, shake, numbers, hit-stop) for the player they belong to
+    View.setSink((name, args) => { if (!SEND_CUE(name)) return; const a = G.actor; this.cues.push(a ? [name, args, a.id] : [name, args]); });
     const s = this.setup;
     startFight({ boss: s.boss, nm: s.nm, seed: s.seed, intro: s.intro, players: s.players.map((e) => ({ cls: e.cls, bot: e.bot ? 3 : 0, name: e.name })) });
     G.players.forEach((p, i) => this.bind(s.players[i].key, p));

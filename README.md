@@ -55,9 +55,11 @@ packages/
   server/    the game server: HTTP for the client files, a small WebSocket server (ws.js), rooms and their lobby
              (lobby.js), and one worker thread per running fight (fight-worker.js, runner.js) stepping the sim in real time.
   client/    the game page (index.html): lobby, Three.js view, HUD, controls. Threshold's hero models are imported
-             unchanged by tools/import-heroes.js into src/heroes.js. debug.html is the older top-down debug viewer
-             (the sim in a Web Worker, solo, no server).
-tools/       command-line scripts: batch bot fights, record/replay, fake players, Threshold parity check, client build.
+             unchanged by tools/import-heroes.js into src/heroes.js, and Threshold's look (post chain, FX, camera,
+             world helpers, warm-up, freeze log, HUD styles) by tools/import-look.js into src/look.js and src/hud.css.
+             debug.html is the older top-down debug viewer (the sim in a Web Worker, solo, no server).
+tools/       command-line scripts: batch bot fights, record/replay, fake players, Threshold parity check, client build,
+             the Threshold importers and browser screenshots.
 test/        node --test suites: determinism, sim basics, several players, and the server end to end over real sockets.
 ```
 
@@ -79,6 +81,9 @@ npm run sim                 # bot fights: node tools/sim.js atelier all 4 [nm], 
 npm run replay              # record a bot fight and replay it without the bot: node tools/replay.js selftest
 npm run build               # static client in dist/
 npm run heroes -- ../fun-stuff/threshold/src   # re-import the hero models after changing them in Threshold
+npm run look -- ../fun-stuff/threshold/src     # re-import Threshold's look (post chain, FX, camera, world, warm-up, HUD css)
+npm run shots -- shots [dummy|atelier]         # screenshots of the real client against a real server (Playwright)
+TH_GPU=1 npm run shots -- shots-gpu            # the same with your installed Chrome on the graphics card
 ```
 
 `tools/sim.js` reads `GOD=1` (no damage, pace only), `GODMODE=1` (hits land, health stays at 1 or more), `LEVEL=1..3`,

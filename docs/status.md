@@ -61,6 +61,26 @@ client described below.
   fires cues when the drawing reaches their tick. Threshold's hero models and animation code are imported unchanged
   (`tools/import-heroes.js`). Pentimento's arena, paint canvas, dish, half-disc and roller are simple stand-ins drawn
   from cues and `pub`; the boss is a jointed lay figure, not Threshold's model.
+- **Threshold's look** is imported unchanged by `tools/import-look.js` into `client/src/look.js` (and its HUD styles into
+  `hud.css`): the shader math guard, the renderer and quality table, the post chain (NaN sanitize, bloom, colour grade,
+  vignette, grain, flash, pulse, `Post.lerpTo` regrades), the whole FX library (GPU particles, rings, pillars, beams,
+  lightning, slashes, domes, pooled lights, damage numbers, shake), the camera rig (orbit, 4 to 26 m zoom, cinematic
+  blend, shake, keep-out-of-the-boss, occluder fade), the world helpers (procedural surfaces, sky, environment light,
+  motes), the warm-up and the freeze log. A short prelude gives that code the globals it reads; `Look.frame` runs one frame
+  as Threshold's main loop does. `view.js` feeds it: hero and boss stand-ins for the camera, cues into `FX` / `Post` /
+  `Cam`, hazards drawn with Threshold's telegraph decal shader and bullets with its three instanced bullet shaders, from
+  snapshots.
+- **No shader compiles mid-fight**: on entering an arena the client builds everything (including one hidden hero per class,
+  so a class change or a newcomer adds no program) and runs `Warm.run`; `view.info().compiledInFight` lists any program
+  compiled after that (empty on the dummy solo and in a party, and on Pentimento through 30 s).
+- **Screen-only cues are per player**: the server tags each cue with the acting player (`[name, args, actorId]`), and shake,
+  flash, kick, hit-stop, the hurt vignette, slot flashes and your own damage numbers play only for their owner.
+- **HUD** is Threshold's: boss frame with phase ticks and cast bar, enrage clock, target frame, player frame (health,
+  shield, class pips, cast bar), the hotbar with its icons, cooldown sweeps, charges, ready and active marks, buffs, the hurt
+  vignette. Party frames and the dummy meter are Axiom's own.
+- **Screenshots**: `tools/shots.js` drives the real client against a real server (dummy solo for each class, a dummy party
+  seen from one player, Pentimento intro and fight). In the cloud it renders with SwiftShader; `TH_GPU=1` uses the installed
+  Chrome on the graphics card. The GPU run has not been done yet.
 - **Tests**: `test/server.test.js` runs the real server and real sockets: lobby, the dummy flow, four autopilots killing
   Pentimento with a spectator joining late, and "brain" fake clients that play from snapshots only. The client was
   checked in Chromium (Playwright, two players, dummy then Pentimento).
@@ -70,7 +90,9 @@ client described below.
 - **No client prediction.** Your own character moves when the server says so: fine on a LAN, sluggish over 100 ms+.
   Prediction needs the same trig on client and server (see below) and is plan step 4.
 - **Only Duskblade and Stormcaller** are offered in the lobby. Ashwarden and Hexslinger are still in the sim.
-- **Pentimento's look** is a stand-in: no Nightmare negative post-effect, no intro framing, no sound or music.
+- **Pentimento's look** is a stand-in (arena, boss model, paint canvas, Nightmare negative look): the next step.
+- **No sound or music.** Sound cues arrive and are dropped.
+- **No quality setting in the menu.** `?quality=high|med|low` picks Threshold's quality table entry.
 - **JSON snapshots, full every tick.** Deltas or a binary format would cut bandwidth about tenfold when it matters.
 - **One fight.** The other 18 bosses are not ported. `docs/porting.md` says how.
 - **No accounts, no records, no reconnect.** A dropped player rejoins as a newcomer (and watches a locked fight).

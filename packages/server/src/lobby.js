@@ -18,9 +18,10 @@ let nextMember = 1;
 function catalog() {
   const classes = LOBBY_CLASSES.map((id) => G.classes.find((c) => c.id === id)).filter(Boolean).map((c) => ({
     id: c.id, name: c.name, role: c.role, color: c.color, resource: c.resource.name, resKind: c.resource.kind || 'pips', resMax: c.resource.max, melee: !!c.melee, look: c.look,
-    skills: c.skills.map((s, i) => s ? { slot: i, key: '123QERF'[i], name: s.name, desc: s.desc, cd: s.cd || 0, cast: typeof s.cast === 'number' ? s.cast : 0, limited: s.limited || 0 } : null),
+    skills: c.skills.map((s, i) => s ? { slot: i, key: '123QERF'[i], id: s.id, icon: s.icon, name: s.name, desc: s.desc, gcd: s.gcd !== false, cd: s.cd || 0, cast: typeof s.cast === 'number' ? s.cast : 0, limited: s.limited || 0 } : null),
   }));
-  const bosses = ENCOUNTERS.map((id) => G.bosses.find((b) => b.id === id)).filter(Boolean).map((b) => ({ id: b.id, name: b.name, title: b.title || '', training: !!b.training, nightmare: !!b.nightmare }));
+  const bosses = ENCOUNTERS.map((id) => G.bosses.find((b) => b.id === id)).filter(Boolean).map((b) => ({ id: b.id, name: b.name, title: b.title || '', training: !!b.training, nightmare: !!b.nightmare,
+    ticks: (b.phases || []).map((q) => q.at).filter((at) => at < 1), nmTicks: b.nightmare && b.nightmare.phases ? b.nightmare.phases.map((q) => q.at).filter((at) => at < 1) : null }));
   return { classes, bosses };
 }
 

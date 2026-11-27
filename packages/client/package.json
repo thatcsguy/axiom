@@ -1,0 +1,7 @@
+{
+  "name": "@axiom/client",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Axiom's browser client. For now a top-down debug viewer that runs the sim in a Web Worker.",
+  "type": "module"
+}

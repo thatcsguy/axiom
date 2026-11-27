@@ -1,0 +1,12 @@
+{
+  "name": "@axiom/sim",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Headless Axiom rules: no Three.js, no DOM. Runs in Node and in a browser worker.",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./bosses": "./src/bosses/index.js"
+  }
+}

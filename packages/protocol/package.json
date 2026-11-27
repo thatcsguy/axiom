@@ -1,0 +1,9 @@
+{
+  "name": "@axiom/protocol",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Messages between Axiom clients and the server.",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": { ".": "./src/index.js" }
+}

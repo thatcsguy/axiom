@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Axiom Debug View</title>
+<style>
+  :root { --bg: #101116; --fg: #e8e6e0; --dim: #8d8c94; --panel: rgba(16, 17, 22, 0.82); --accent: #f0c060; }
+  :root[data-theme="light"] { --bg: #f2f0ea; --fg: #1c1c22; --dim: #666570; --panel: rgba(242, 240, 234, 0.86); --accent: #a06a00; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 13px/1.4 system-ui, sans-serif; overflow: hidden; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+  #hud { position: fixed; left: 16px; top: 12px; right: 16px; pointer-events: none; display: flex; justify-content: space-between; gap: 16px; }
+  .box { background: var(--panel); padding: 8px 12px; border-radius: 6px; white-space: pre; font-variant-numeric: tabular-nums; }
+  #help { position: fixed; left: 16px; bottom: 12px; max-width: calc(100vw - 380px); color: var(--dim); }
+  #bar { position: fixed; right: 16px; bottom: 12px; display: flex; gap: 8px; }
+  button, select { font: inherit; background: var(--panel); color: var(--fg); border: 1px solid var(--dim); border-radius: 4px; padding: 4px 8px; }
+  b { color: var(--accent); font-weight: 600; }
+  @media (max-width: 640px) { #hud { flex-direction: column; } #help { display: none; } }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud"><div class="box" id="me"></div><div class="box" id="boss"></div></div>
+<div class="box" id="help">Debug view of the headless sim (not the game's look). WASD move (up is north), 1 2 3 Q E R F skills, Space jump, Tab target, B bot on/off.</div>
+<div id="bar">
+  <select id="cls"><option>duskblade</option><option>stormcaller</option><option>ashwarden</option><option>hexslinger</option></select>
+  <select id="diff"><option value="0">Normal</option><option value="1">Nightmare</option></select>
+  <button id="go">Restart</button>
+</div>
+<script type="module" src="src/main.js"></script>
+</body>
+</html>

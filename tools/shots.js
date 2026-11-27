@@ -104,7 +104,7 @@ const SCENES = [
   // Pentimento's looks, one scene each (start-at-phase hooks; the shots print compiledInFight, which must stay [])
   { name: 'atelier-colour', async run(br, url) { const p = await atelier(br, url, 'shot-ac', { phase: 1 }); await fightAt(p, 14); await shot(p, 'atelier-colour'); } },
   { name: 'atelier-negative', async run(br, url) { const p = await atelier(br, url, 'shot-an', { phase: 2 }); await fightAt(p, 9); await shot(p, 'atelier-negative-1'); await fightAt(p, 20); await cam(p, { yaw: 2.6, pitch: 0.3, dist: 12 }); await sleep(800); await shot(p, 'atelier-negative-2'); } },
-  { name: 'atelier-kill', async run(br, url) { const p = await atelier(br, url, 'shot-ak'); await fightAt(p, 10); await hook(p, { kill: true }); await won(p); await drawn(p, 1.0); await shot(p, 'atelier-kill-1'); await drawn(p, 2.0); await shot(p, 'atelier-kill-2'); } },
+  { name: 'atelier-kill', async run(br, url) { const p = await atelier(br, url, 'shot-ak'); await fightAt(p, 10); await hook(p, { kill: true, hold: true }); await won(p); await drawn(p, 1.0); await shot(p, 'atelier-kill-1'); await drawn(p, 2.0); await shot(p, 'atelier-kill-2'); } },
   { name: 'atelier-nm-colour', async run(br, url) { const p = await atelier(br, url, 'shot-nc', { nm: true }); await fightAt(p, 12); await shot(p, 'atelier-nm-colour'); } },
   { name: 'atelier-nm-chiaroscuro', async run(br, url) { // the turn into the finale (its cinematic), then a sitting, then the last ramp step
     const p = await atelier(br, url, 'shot-nf', { nm: true, phase: 2 }); await fightAt(p, 3.2); await shot(p, 'atelier-nm-chiaroscuro-cut'); await fightAt(p, 16); await shot(p, 'atelier-nm-chiaroscuro-1');
@@ -112,7 +112,7 @@ const SCENES = [
     await hook(p, { fk: 8 }); await fightAt(p, 48); await shot(p, 'atelier-nm-chiaroscuro-step4');
   } },
   { name: 'atelier-nm-lastblow', async run(br, url) { const p = await atelier(br, url, 'shot-nl', { nm: true, phase: 2 }); await fightAt(p, 12); await hook(p, { ft: 383.4 }); await fightAt(p, 387); await shot(p, 'atelier-nm-lastblow'); } },
-  { name: 'atelier-nm-kill', async run(br, url) { const p = await atelier(br, url, 'shot-nk', { nm: true, phase: 2 }); await fightAt(p, 14); await hook(p, { kill: true }); await won(p); await drawn(p, 2.0); await shot(p, 'atelier-nm-kill-1'); await drawn(p, 3.0); await shot(p, 'atelier-nm-kill-2'); } },
+  { name: 'atelier-nm-kill', async run(br, url) { const p = await atelier(br, url, 'shot-nk', { nm: true, phase: 2 }); await fightAt(p, 14); await hook(p, { kill: true, hold: true }); await won(p); await drawn(p, 2.0); await shot(p, 'atelier-nm-kill-1'); await drawn(p, 3.0); await shot(p, 'atelier-nm-kill-2'); } },
   { name: 'atelier-watcher', async run(br, url) { // someone arrives 30 s in: the catch-up shows the paint already down
     const p = await atelier(br, url, 'shot-aw'); await fightAt(p, 30);
     const w = await page(br, url + '/?room=shot-aw&name=Wes'); await inFight(w); await fightAt(w, 33); await shot(p, 'atelier-watcher-player'); await shot(w, 'atelier-watcher');

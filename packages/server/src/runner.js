@@ -60,7 +60,7 @@ export class FightRunner {
     if (over() && !this.ended) { this.ended = true; this.endT = G.now; }
   }
   // the end of a fight is shown for a moment (the kill, the wipe) before the room goes back to the lobby
-  get finished() { return this.ended && G.now - this.endT > (G.state === 'win' ? 6 : 4); }
+  get finished() { return this.ended && !this.hold && G.now - this.endT > (G.state === 'win' ? 6 : 4); }
   get result() { return G.state === 'win' ? 'win' : G.state === 'dead' ? 'dead' : 'ended'; }
   // one tick's message for every client: the snapshot and the cues it raised
   message() { const c = this.cues; this.cues = []; return JSON.stringify({ t: 'snap', s: snapshot(), c }); }
@@ -69,13 +69,14 @@ export class FightRunner {
   }
   hash() { return stateHash(); }
   // test hooks (tools/shots.js; only a server started with test: true passes them on): set the boss's health (a fraction),
-  // push Pentimento's finale to a later sitting (fk), move the fight clock (ft, for the enrage), or kill him
+  // push Pentimento's finale to a later sitting (fk), move the fight clock (ft, for the enrage), kill him, or hold the end
   test(o) {
     const b = G.boss; if (!b || !o) return;
     if (typeof o.hp === 'number') b.hp = Math.max(1, Math.min(b.maxHp, b.maxHp * o.hp));
     if (typeof o.fk === 'number' && b.state) b.state.fk = Math.max(b.state.fk || 0, o.fk);
     if (typeof o.ft === 'number') G.ft = Math.max(G.ft, o.ft);
     if (o.kill && b.alive) b.damage(b.hp + 1, { src: 'player' });
+    if (o.hold) this.hold = true; // keep the end of the fight on screen (the kill cinematic is slow in software rendering)
   }
   // what a newcomer has missed of the picture (Pentimento: the paint already down), or null
   catchup() { const b = G.boss, d = b && b.def.catchup && b.def.catchup(b); return d ? JSON.stringify(Object.assign({ t: 'catchup', tick: G.tick, boss: b.def.id, nm: !!G.nightmare }, d)) : null; }

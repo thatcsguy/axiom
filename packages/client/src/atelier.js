@@ -125,7 +125,7 @@ export class AtelierView {
       }(), 'look');
       return;
     }
-    slow(0.3, 9 * 0.11 + 0.5);
+    slow(0.3, (9 * 0.11 + 0.5) / 0.3); // Threshold's 0.3 time scale holds until the last blast (real seconds here)
     Co.start(function* () {
       const a = Cam.yaw + 0.6, r = b.radius * 2 + 10, tv = new V3(); Cam.cine = { pos: new V3(b.pos.x - Math.sin(a) * r, b.aimY + 3, b.pos.z - Math.cos(a) * r), look: new V3(b.pos.x, b.aimY, b.pos.z), fov: 44 };
       for (let i = 0; i < 9; i++) { tv.set(b.pos.x, b.aimY, b.pos.z); FX.explode(tv.x + (Math.random() - 0.5) * b.radius * 2, tv.y + (Math.random() - 0.5) * b.aimY, tv.z + (Math.random() - 0.5) * b.radius * 2, AL.INK, 4 + i * 0.6, 0xffffff); yield 0.11; }

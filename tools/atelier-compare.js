@@ -85,7 +85,7 @@ async function axiom(br, url, m) {
     await p.waitForFunction(() => window.__axiom.S.phase === 'fight' && window.__axiom.net.latest, null, { timeout: 30000 });
     await p.waitForFunction((t) => { const s = window.__axiom.net.latest; return s && s.t >= t; }, m.t, { timeout: 900000, polling: 250 });
     if (m.kill) { // the kill plays when the drawing reaches it (a tenth of a second behind the server): wait on the drawing's own clock
-      await p.evaluate(() => window.__axiom.net.send({ t: 'test', o: { kill: true } }));
+      await p.evaluate(() => window.__axiom.net.send({ t: 'test', o: { kill: true, hold: true } }));
       await p.waitForFunction(() => document.querySelector('#banner') && !document.querySelector('#banner').hidden, null, { timeout: 60000, polling: 50 });
       const r0 = await p.evaluate(() => window.__axiom.G.rt); await p.waitForFunction((q) => window.__axiom.G.rt >= q, r0 + m.after, { timeout: 300000, polling: 50 }); }
     else { await p.addStyleTag({ content: 'body.cine::before, body.cine::after { display: none; }' }); await setCam(p, m, 'ax'); } // Axiom's cinematic letterbox off, as Threshold has none

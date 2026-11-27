@@ -4,10 +4,43 @@ Axiom is a server-authoritative multiplayer raid game. It grows out of **Thresho
 [fun-stuff/threshold](https://github.com/thatcsguy/fun-stuff/tree/main/threshold): the same classes, the same boss rules
 and the same engine, rebuilt so that a Node server runs the fight and every client is a view of it.
 
-The first fight ported is **Pentimento** (boss id `atelier`), Normal and Nightmare.
+The playable prototype: open the page, pick **Duskblade** or **Stormcaller**, and either walk up to the **Training
+Dummy** (anyone can join, change class, see a damage meter) or start **Pentimento** (boss id `atelier`, Normal or
+Nightmare), which loads everyone in the room into the fight and locks the room until it ends.
 
 The plan this repository follows is [docs/plan.md](docs/plan.md). Where the work stands is [docs/status.md](docs/status.md).
 How to bring another Threshold boss over is [docs/porting.md](docs/porting.md).
+
+## Play it locally
+
+```sh
+npm install        # links the workspace packages; nothing is downloaded
+npm start          # the game server: open http://localhost:8080/ (share http://<your-ip>:8080/ on your network)
+```
+
+Everyone who opens the same address lands in the same room. `?room=name` picks another room (one fight per room,
+several rooms at once), `?name=Ann` sets your name. No friends handy: `npm run bots -- 2` connects two fake players
+(they play from snapshots, through the real socket), or press **Add a bot** in the lobby for a server-side autopilot.
+
+Controls (Threshold's): WASD moves relative to the camera, hold the left mouse button to look, hold the right to look
+and steer, wheel to zoom. 1 2 3 Q E R F are the class's skills, Space jumps, Tab or a click picks a target, Esc opens
+the menu (change class on the dummy, let the autopilot play you, end the encounter).
+
+## Host it
+
+The server is one Node process with no dependencies that serves the client pages and the WebSocket (`/ws`) on the
+same port. It reads `PORT` (default 8080) and `HOST`.
+
+- **Fly.io**: `fly launch` in this folder picks up the `Dockerfile`; answer no to databases, then `fly deploy`.
+  Keep one machine (`fly scale count 1`): rooms live in memory, so two machines would be two separate worlds.
+- **Render**: a new *Web Service* from this repository, runtime Node, build `npm install`, start `npm start`.
+  The free tier sleeps when idle and takes about a minute to wake.
+- **Any VPS**: `npm install && PORT=80 npm start`, or the Dockerfile.
+
+The client can also be served as static files (`npm run build` writes `dist/`, GitHub Pages ready) and pointed at a
+server elsewhere with `?server=wss://your-server.example/ws`.
+
+The page loads Three.js 0.170 from cdn.jsdelivr.net, so players need internet access even on a local server.
 
 ## Architecture
 
@@ -15,52 +48,48 @@ How to bring another Threshold boss over is [docs/porting.md](docs/porting.md).
 packages/
   sim/       headless fight simulation: no Three.js, no DOM, no audio. Runs in Node, a Web Worker or the browser.
              core (clock, coroutines, seeded RNG), combat (hazards, bullets, entities, bosses), player, the four classes,
-             the autopilot bot, the fight driver (fixed 30 Hz tick, one input frame per tick), a per-tick state hash,
-             snapshots for viewers, record/replay. Bosses live in sim/src/bosses/.
-  protocol/  the messages and input frame shared by client and server, and the server-side frame sanitizer.
-  server/    a Node room that owns one fight, buffers client input frames by tick and steps the sim in real time.
-             No sockets yet.
-  client/    a debug viewer: the sim runs in a Web Worker, the page draws a top-down 2D picture of the snapshot.
-             The real Three.js client (Threshold's look) is the next big piece of work.
-tools/       command-line scripts: batch bot fights, record/replay, Threshold parity check, static server, client build.
-test/        node --test suites: determinism (record a fight, replay it, every tick's hash must match) and sim basics.
+             the autopilot bot, the fight driver (fixed 30 Hz tick, one input frame per player per tick, 1 to 4 players),
+             a per-tick state hash, snapshots for viewers, record/replay. Bosses live in sim/src/bosses/
+             (atelier = Pentimento, dummy = the Training Dummy).
+  protocol/  the messages and input frame shared by client and server (docs at the top of its index.js), the sanitizer.
+  server/    the game server: HTTP for the client files, a small WebSocket server (ws.js), rooms and their lobby
+             (lobby.js), and one worker thread per running fight (fight-worker.js, runner.js) stepping the sim in real time.
+  client/    the game page (index.html): lobby, Three.js view, HUD, controls. Threshold's hero models are imported
+             unchanged by tools/import-heroes.js into src/heroes.js. debug.html is the older top-down debug viewer
+             (the sim in a Web Worker, solo, no server).
+tools/       command-line scripts: batch bot fights, record/replay, fake players, Threshold parity check, client build.
+test/        node --test suites: determinism, sim basics, several players, and the server end to end over real sockets.
 ```
 
 The sim never draws. Everything Threshold did for looks (particles, sounds, music, screen effects, the paint on the
-floor) leaves the sim as a named **cue** (`View.cue('fx.burst', ...)`), which a client may draw and a server ignores.
-Cues can never change the fight: the determinism tests run every fight with and without a cue listener and compare.
+floor) leaves the sim as a named **cue** (`View.cue('fx.burst', ...)`). The server sends cues with each snapshot and the
+client plays them when its drawing reaches that tick. Cues can never change the fight: the determinism tests run every
+fight with and without a cue listener and compare.
 
-A fight is a pure function of its setup (boss, class, seed, difficulty) and its input frames. A recording is just those,
-plus the state hash after every tick, so any recording replays exactly and also serves as a bug report.
+A fight is a pure function of its setup (boss, classes, seed, difficulty) and its input frames. A recording is just
+those, plus the state hash after every tick, so any recording replays exactly and also serves as a bug report.
 
-Plain JavaScript (ES modules), no dependencies, Node 20 or newer. The plan suggested TypeScript; it is deferred so the
-ported code stays line-for-line comparable with Threshold while the port is checked.
+Plain JavaScript (ES modules), no dependencies, Node 20 or newer.
 
-## Running it
+## Other commands
 
 ```sh
-npm install                 # links the workspace packages; nothing is downloaded
-npm test                    # determinism and sim tests (about 15 s)
-npm run sim                 # bot fights against Pentimento, all classes: node tools/sim.js atelier all 4 [nm]
+npm test                    # determinism, sim, multiplayer and server tests (about 20 s)
+npm run sim                 # bot fights: node tools/sim.js atelier all 4 [nm], or party:duskblade,stormcaller
 npm run replay              # record a bot fight and replay it without the bot: node tools/replay.js selftest
-npm run server              # a demo room in the terminal: the bot plays, one status line per second
-npm run dev                 # static server, then open http://localhost:8080/ for the debug viewer
-npm run build               # copies the client and the packages it loads into dist/ (GitHub Pages ready)
+npm run build               # static client in dist/
+npm run heroes -- ../fun-stuff/threshold/src   # re-import the hero models after changing them in Threshold
 ```
 
-Debug viewer controls: WASD to move (up is north), 1 2 3 Q E R F for the class's skills, Space to jump, Tab to change
-target, B to switch the bot on or off. URL options: `?class=hexslinger`, `?nm=1`, `?seed=5`, `?bot=3`, `?skipintro`.
-
 `tools/sim.js` reads `GOD=1` (no damage, pace only), `GODMODE=1` (hits land, health stays at 1 or more), `LEVEL=1..3`,
-`SEED=n` and `HZ=n`.
+`SEED=n` and `HZ=n`. The debug viewer is at `/packages/client/debug.html` (`?class=`, `?nm=1`, `?seed=`, `?bot=3`).
 
 ## Roadmap
 
 From [docs/plan.md](docs/plan.md):
 
 1. **Headless core, solo.** Done for Pentimento.
-2. **Client as a viewer.** The sim already runs in a Web Worker behind a debug viewer; the Three.js view half of
-   Pentimento, drawing only from state, `pub` and cues, is next.
-3. **Server and many players.** WebSocket rooms, a player list in place of `G.player`, target picks and scaling.
-4. **Prediction and the shared clock.**
+2. **Client as a viewer.** Done: the Three.js client draws snapshots, `pub` and cues.
+3. **Server and many players.** Done: WebSocket rooms, 1 to 4 players, target picks and scaling.
+4. **Prediction and the shared clock.** Next: today your own character moves when the server says so.
 5. **Lobby and the rest**, then more fights one at a time.

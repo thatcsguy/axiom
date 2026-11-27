@@ -23,8 +23,12 @@ several rooms at once), `?name=Ann` sets your name. No friends handy: `npm run b
 (they play from snapshots, through the real socket), or press **Add a bot** in the lobby for a server-side autopilot.
 
 Controls (Threshold's): WASD moves relative to the camera, hold the left mouse button to look, hold the right to look
-and steer, wheel to zoom. 1 2 3 Q E R F are the class's skills, Space jumps, Tab or a click picks a target, Esc opens
-the menu (change class on the dummy, let the autopilot play you, end the encounter).
+and steer (the cursor hides while a button is held), wheel to zoom. 1 2 3 Q E R F are the class's skills, Space jumps,
+Tab or a click picks a target, Esc opens the menu (change class on the dummy, let the autopilot play you, end the
+encounter). F3 shows the network overlay.
+
+Try it on a bad line: `?lag=120&jitter=20&loss=1` (simulated in the page), or run `node tools/netsim.js --lag 60
+--jitter 20 --loss 1` and open http://localhost:8090/ instead. `?predict=0` turns prediction off, for comparison.
 
 ## Host it
 
@@ -50,17 +54,19 @@ packages/
              core (clock, coroutines, seeded RNG), combat (hazards, bullets, entities, bosses), player, the four classes,
              the autopilot bot, the fight driver (fixed 30 Hz tick, one input frame per player per tick, 1 to 4 players),
              a per-tick state hash, snapshots for viewers, record/replay. Bosses live in sim/src/bosses/
-             (atelier = Pentimento, dummy = the Training Dummy).
+             (atelier = Pentimento, dummy = the Training Dummy). predict.js: the client's predictor for your character.
   protocol/  the messages and input frame shared by client and server (docs at the top of its index.js), the sanitizer.
   server/    the game server: HTTP for the client files, a small WebSocket server (ws.js), rooms and their lobby
              (lobby.js), and one worker thread per running fight (fight-worker.js, runner.js) stepping the sim in real time.
   client/    the game page (index.html): lobby, Three.js view, HUD, controls. Threshold's hero models are imported
              unchanged by tools/import-heroes.js into src/heroes.js, and Threshold's look (post chain, FX, camera,
              world helpers, warm-up, freeze log, HUD styles) by tools/import-look.js into src/look.js and src/hud.css.
+             net.js: the connection, clock sync and jitter buffer; self.js: your predicted character.
              debug.html is the older top-down debug viewer (the sim in a Web Worker, solo, no server).
 tools/       command-line scripts: batch bot fights, record/replay, fake players, Threshold parity check, client build,
              the Threshold importers and browser screenshots.
-test/        node --test suites: determinism, sim basics, several players, and the server end to end over real sockets.
+test/        node --test suites: determinism, sim basics, several players, prediction (against the sim and over the real
+             server), and the server end to end over real sockets.
 ```
 
 The sim never draws. Everything Threshold did for looks (particles, sounds, music, screen effects, the paint on the
@@ -86,6 +92,8 @@ npm run shots -- shots [dummy|atelier]         # screenshots of the real client 
 node tools/atelier-compare.js ../fun-stuff/threshold/src compare   # Pentimento in Threshold and Axiom, side by side
 npm run atelier -- ../fun-stuff/threshold/src  # re-import Pentimento's look from Threshold (atelier-look.js)
 TH_GPU=1 npm run shots -- shots-gpu            # the same with your installed Chrome on the graphics card
+node tools/netsim.js --lag 60 --jitter 20 --loss 1   # a bad network as a proxy: open http://localhost:8090/
+node tools/netfeel.js [--repo ../other-checkout]     # two browsers through it: cast bar smoothness, corrections, input delay
 ```
 
 `tools/sim.js` reads `GOD=1` (no damage, pace only), `GODMODE=1` (hits land, health stays at 1 or more), `LEVEL=1..3`,
@@ -98,5 +106,6 @@ From [docs/plan.md](docs/plan.md):
 1. **Headless core, solo.** Done for Pentimento.
 2. **Client as a viewer.** Done: the Three.js client draws snapshots, `pub` and cues.
 3. **Server and many players.** Done: WebSocket rooms, 1 to 4 players, target picks and scaling.
-4. **Prediction and the shared clock.** Next: today your own character moves when the server says so.
+4. **Prediction and the shared clock.** Done: your own character is predicted from the sim's own code and reconciled
+   with the server; the world runs on a synced clock with an adaptive jitter buffer (docs/status.md).
 5. **Lobby and the rest**, then more fights one at a time.

@@ -65,6 +65,7 @@ export class Room {
     switch (msg.t) {
       case 'ping': return this.send(m, { t: 'pong', c: msg.c });
       case 'input': if (this.phase === 'fight' && m.inFight && !m.auto) this.post({ t: 'input', key: m.id, f: msg.f }); return;
+      case 'frames': if (this.phase === 'fight' && m.inFight && !m.auto && Array.isArray(msg.fs)) this.post({ t: 'frames', key: m.id, k: msg.k, fs: msg.fs.slice(0, 8) }); return;
       case 'class': {
         if (!LOBBY_CLASSES.includes(msg.cls)) return this.note(m, 'That class is not open yet.');
         if (this.phase === 'lobby') { m.cls = msg.cls; return this.sync(); }
@@ -106,7 +107,10 @@ export class Room {
   }
   onWorker(w, e) {
     if (w !== this.worker) return;
-    if (e.t === 'snap') { for (const m of this.members) if (m.sock && m.sock.open && m.sock.buffered < BACKLOG) m.sock.send(e.data); }
+    if (e.t === 'snap') { // the shared snapshot; a player's own state rides along in their copy only
+      const own = new Map(e.own || []), head = own.size ? e.data.slice(0, -1) : null;
+      for (const m of this.members) if (m.sock && m.sock.open && m.sock.buffered < BACKLOG) { const me = own.get(m.id); m.sock.send(me ? head + ',"me":' + me + '}' : e.data); }
+    }
     else if (e.t === 'started') {
       const ids = new Map(e.ids); this.enc.seed = e.seed;
       for (const m of this.members) { m.sim = ids.get(m.id) || null; this.send(m, { t: 'start', enc: this.enc, you: m.sim, tickHz: e.hz }); }

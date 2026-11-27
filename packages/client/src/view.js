@@ -131,7 +131,8 @@ export class View {
   }
 
   // ---------------- one frame
-  // a, b, k: the blended snapshots; self: the same for your own character (less delay); you: your character's id (null: watching)
+  // a, b, k: the blended snapshots; self: the same for your own character (your prediction, with off: its fading correction;
+  // or, unpredicted, snapshots with less delay); you: your character's id (null: watching)
   draw(dt, a, b, k, self, you, input) {
     if (this.slowT > 0) { this.slowT -= dt; if (this.slowT <= 0) this.slowK = 1; }
     const dts = dt * this.slowK; HeroClock.now += dts;
@@ -145,6 +146,7 @@ export class View {
       const pa = A.players.find((q) => q.id === pb.id) || pb, p2 = B.players.find((q) => q.id === pb.id) || pb;
       const h = this.heroFor(p2); seen.add(pb.id); if (pb.id === you) mine = { h, p: p2 };
       h.x = lerp(pa.x, p2.x, K); h.y = lerp(pa.y, p2.y, K); h.z = lerp(pa.z, p2.z, K); h.f = lerpAng(pa.facing, p2.facing, K);
+      if (useSelf && self.off) { h.x += self.off.x; h.y += self.off.y; h.z += self.off.z; } // a prediction's correction, fading out
       h.g.position.set(h.x, h.y, h.z); h.m.group.rotation.y = h.f; h.g.updateMatrixWorld(true); // the weapon trail samples world positions this frame
       if (p2.alive) {
         if (h.deathT > 0) { h.deathT = 0; h.m.body.rotation.x = 0; h.m.body.position.y = 0; }

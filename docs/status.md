@@ -1,8 +1,8 @@
 # Status
 
 Last updated 2026-11-27. A playable multiplayer prototype: a Node server, a Three.js browser client, rooms with a lobby,
-1 to 4 players, Duskblade and Stormcaller, the Training Dummy and Pentimento. Plan steps 1 to 3 are done; step 4
-(prediction) is not started.
+1 to 4 players, Duskblade and Stormcaller, the Training Dummy and Pentimento. Plan steps 1 to 4 are done (step 4:
+your own character is predicted, the world runs on a synced clock; see "Prediction and the shared clock").
 
 ## What is ported
 
@@ -54,12 +54,13 @@ client described below.
   Pentimento loads every member into the fight and locks the room; newcomers watch until it ends. The dummy stays open:
   newcomers walk in. A player who leaves a boss fight is taken over by the autopilot. Each running fight has its own
   worker thread.
-- **Protocol** (`protocol/src/index.js`): JSON. Clients send input frames at 30 Hz (move, facing, held buttons, presses,
-  target); the server sends a snapshot per tick (about 4.5 KB, about 130 KB/s per player on Pentimento) with that
-  tick's cues. Loopback round trip under 1 ms, snapshot spacing p99 37 ms.
-- **Client**: draws 100 ms in the past (your own character 50 ms), blending the two snapshots around that moment, and
-  fires cues when the drawing reaches their tick. Threshold's hero models and animation code are imported unchanged
-  (`tools/import-heroes.js`).
+- **Protocol** (`protocol/src/index.js`): JSON. The browser sends one input frame per tick (move, facing, held buttons,
+  presses, target), stamped with the tick it is for; the server sends a snapshot per tick (about 4.5 KB, about 130 KB/s
+  per player on Pentimento) with that tick's cues, and each player's copy also carries their own character's whole state.
+  Loopback round trip under 1 ms, snapshot spacing p99 37 ms.
+- **Client**: your character is predicted (below); everything else is drawn a little in the past, blending the two
+  snapshots around that moment, and cues fire when the drawing reaches their tick. Threshold's hero models and
+  animation code are imported unchanged (`tools/import-heroes.js`).
 - **Pentimento's look is Threshold's own**, imported unchanged by `tools/import-atelier.js` into `client/src/atelier-look.js`
   (the view half of `38_boss_atelier.js`: the studio, the floor canvas with its stroke stamping and budgeted repaint job,
   every material and shader, the carved lay figure and its animation, the dish, aura, roller, Blots, varnish shell, contact
@@ -101,10 +102,50 @@ client described below.
   Pentimento with a spectator joining late, and "brain" fake clients that play from snapshots only. The client was
   checked in Chromium (Playwright, two players, dummy then Pentimento).
 
+## Prediction and the shared clock (plan step 4)
+
+Patrick's ask (2026-11-27): make it feel client-controlled. What the client does now:
+
+- **Your character is predicted from the sim's own Player code** (`sim/src/predict.js`, `client/src/self.js`). The page
+  runs a small world in its main thread: one real Player of your class and stand-ins for the boss and adds. Each 30 Hz
+  tick samples your keys into a frame stamped with that tick, steps the predictor and sends the frame (with the two before
+  it). Movement, jumps, Lunge, Blink, the cast bar, the global cooldown, cooldowns and charges, resources your own skills
+  give, buffs, "out of range" and the hotbar's usable state all answer on the frame you press. The server applies each
+  frame on its own tick (`runner.js`, an input buffer per player); a frame too late for its tick has its presses applied
+  on the next one.
+- **Reconciliation:** each snapshot carries your character's whole state at its tick (`ownState`, full precision, only in
+  your copy). The predictor takes it and replays the frames the server has not answered. Where nothing in the world
+  touched you the replay lands exactly on the prediction: `test/predict.test.js` checks every tick of a 40 s fight for all
+  four classes on the dummy (exact), Pentimento (98% of windows exact; the rest are hits, paint and the boss turning), and
+  `test/prediction-server.test.js` checks it over the real server and sockets. Where it does not, the drawn position keeps
+  the difference as an offset that fades in about 0.1 s (more than 3 m is taken at once); a cast moved in time fades the same way.
+- **Immediate feedback:** cues your own skills raise (swings, slashes, lightning, the heal number) play from the
+  prediction. The server's copies (same cue, within 4 ticks) are dropped; everything else it raises for you (damage
+  numbers, a parry, hits on you) plays in step with the world. Damage numbers wait for the server on purpose.
+- **Clock sync:** `serverNow()` = arrival time x 30 + the best (least delayed) offset of the last 4 s. A faster path is
+  believed at once, a slower one only by a slow slew.
+- **Adaptive jitter buffer:** the world is drawn at `renderTick`, behind `serverNow()` by one snapshot interval plus the
+  90th percentile of arrival spread (50 to 300 ms; it grows quickly and shrinks slowly). The render clock runs on real time
+  and is steered by at most 8% speed, never jumping. Boss and target cast bars are computed from that clock and the cast's
+  start tick, so they run smoothly at any frame rate. The predicted clock runs ahead by a `lead` that follows the server's
+  report of how early frames arrive (`me.ia`), steered by at most 6% speed.
+- **Network overlay:** F3 (or backquote, or `?net=1`): ping, jitter, snapshots per second, kB/s, how far behind the world
+  is drawn, how far ahead you are predicted, how early your inputs arrive (late frames, missed ticks), and the size of
+  corrections (now, last, max over 5 s; cast corrections in ms).
+- **A bad line on demand:** `?lag=120&jitter=20&loss=1` in the page (round trip ms, +- ms each way, % loss as a TCP
+  stall), or `node tools/netsim.js --lag 60 --jitter 20 --loss 1 --upstream http://127.0.0.1:8080` as a proxy on :8090.
+- **Measured** with `tools/netfeel.js` (two browsers, Ann casting Bolt and walking, Ben walking and slashing, Pentimento,
+  god mode, through the proxy at 60 ms +- 20 ms and 1% loss; SwiftShader, so about 9 frames a second). Results are in the
+  PR that brought this (#7). `--repo <checkout>` measures another build the same way.
+- Not predicted: anything the world does to you (hits, knockback, paint slowing you, the cinematic lock starting), other
+  players, the boss. Lag compensation is not used, on purpose (plan: hazards are announced in advance; coroutines cannot
+  rewind). The Stormcaller's next glowing Static slot is drawn from the fight's RNG, so after a Discharge the prediction
+  may show the wrong "next" pip for one round trip.
+
 ## The boundary (what is not done)
 
-- **No client prediction.** Your own character moves when the server says so: fine on a LAN, sluggish over 100 ms+.
-  Prediction needs the same trig on client and server (see below) and is plan step 4.
+- **Prediction is your own character only.** Telegraphs and bullets are drawn in the past with the rest of the world;
+  the plan's "announce hazards with their fire tick and draw them on the predicted clock" is not done.
 - **Only Duskblade and Stormcaller** are offered in the lobby. Ashwarden and Hexslinger are still in the sim.
 - **No sound or music.** Sound cues arrive and are dropped.
 - **No quality setting in the menu.** `?quality=high|med|low` picks Threshold's quality table entry.
@@ -113,8 +154,8 @@ client described below.
 - **No accounts, no records, no reconnect.** A dropped player rejoins as a newcomer (and watches a locked fight).
 - **Float determinism across engines is not guaranteed.** The same JavaScript engine gives the same fight every time,
   but Chromium and Node (or two V8 versions) can disagree in the last bit of `Math.sin` / `Math.cos`. A server-only
-  authority does not care; client prediction (step 4) and replays across versions will. The fix, if needed, is a small
-  deterministic trig module used by the sim in place of `Math`.
+  authority does not care; client prediction only sees it as a correction of a fraction of a millimetre, which the
+  fading offset hides. Replays across versions would care. The fix, if needed, is a small deterministic trig module.
 - **JavaScript, not TypeScript.** Deferred while the port is compared line by line with Threshold.
 
 ## Bot pace on Pentimento (Node, 60 Hz)
@@ -127,5 +168,5 @@ Nightmare retune (PR #77).
 
 1. Play it with real people over the internet (Fly.io or Render) and collect what feels wrong: input delay, camera,
    readability of Pentimento's paint at a distance.
-2. Client prediction for your own movement and instant skills (plan step 4), with deterministic trig first.
+2. Feel it on a real line (Fly.io or Render) with the F3 overlay on; tune the render delay and lead limits from that.
 3. Pentimento's sound from Threshold, then mechanic tweaks for parties.

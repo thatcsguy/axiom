@@ -6,7 +6,7 @@ import { Hz, Bul } from './combat.js';
 
 const r3 = (v) => Math.round(v * 1000) / 1000;
 
-function playerSnap(p) {
+export function playerSnap(p) {
   return {
       id: p.id, name: p.name || '', cls: p.cls.id, x: r3(p.pos.x), y: r3(p.pos.y), z: r3(p.pos.z), facing: r3(p.facing), hp: Math.round(p.hp), maxHp: p.maxHp, alive: p.alive,
       res: p.res, resMax: p.resMax, gcd: r3(p.gcd), gcdMax: p.gcdMax, shield: Math.round(p.shield), shieldMax: p.shieldMax, target: p.target ? p.target.id : null,
@@ -29,7 +29,7 @@ export function snapshot() {
     arena: G.arena ? { radius: G.arena.radius || 20, edge: G.arena.edge, spawn: G.arena.spawn } : null,
     player: ps[0] || null, // the first player (the debug viewer's)
     players: ps,
-    ents: G.ents.map((e) => ({ id: e.id, name: e.name, boss: e.isBoss, x: r3(e.pos.x), y: r3(e.pos.y), z: r3(e.pos.z), facing: r3(e.facing), hp: Math.round(e.hp), maxHp: e.maxHp, radius: e.radius, alive: e.alive, immune: e.immune, color: e.def && e.def.color,
+    ents: G.ents.map((e) => ({ id: e.id, name: e.name, boss: e.isBoss, x: r3(e.pos.x), y: r3(e.pos.y), z: r3(e.pos.z), facing: r3(e.facing), hp: Math.round(e.hp), maxHp: e.maxHp, radius: e.radius, alive: e.alive, immune: e.immune, color: e.def && e.def.color, tg: e.targetable, ay: e.aimY, my: e.meleeY,
       cast: e.castState ? { name: e.castState.name, t: r3(e.castState.t), time: e.castState.time } : null })),
     // hazards and bullets also carry what Threshold's decal and bullet shaders draw from (fire flash, zone style, fade, lift, the
     // bullet's heading and age for its streak)

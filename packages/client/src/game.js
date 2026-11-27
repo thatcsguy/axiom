@@ -2,7 +2,8 @@
 // snapshots (view.js). Controls follow Threshold: WASD move (camera-relative), hold left mouse to look, hold right mouse to
 // look and steer, wheel to zoom, 1 2 3 Q E R F skills (hold to repeat), Space jump, Tab / Shift+Tab or click to target,
 // Esc for the menu.
-import { Net, serverUrl, INTERP, SELF_INTERP } from './net.js';
+import { Net, serverUrl, lineFromQuery } from './net.js';
+import { SelfSim } from './self.js';
 import { View, PIG, PIG_NAME } from './view.js';
 import { ICON, scPipCls, G as LookG } from './look.js';
 
@@ -15,8 +16,11 @@ const SLOT_CODES = [['Digit1'], ['Digit2'], ['Digit3'], ['KeyQ', 'Digit4'], ['Ke
 const S = { catalog: null, lobby: null, me: null, you: null, enc: null, phase: 'connecting', end: null, menu: false, nm: false, view: null, lastSnap: null };
 let name = QS.get('name') || store.get('name', '');
 if (!name) { name = 'Player ' + Math.floor(100 + Math.random() * 900); }
-const net = new Net(serverUrl(QS), { name, cls: store.get('cls', 'duskblade') });
-window.__axiom = { net, S, G: LookG }; // for tests and the console (G: the drawing's clocks)
+const net = new Net(serverUrl(QS), { name, cls: store.get('cls', 'duskblade') }, lineFromQuery(QS));
+// your own character is predicted (self.js) unless ?predict=0 (for comparison: then it is drawn from snapshots, like others)
+const PREDICT = QS.get('predict') !== '0';
+let self = null;
+window.__axiom = { net, S, G: LookG, get self() { return self; }, netStats }; // for tests and the console (G: the drawing's clocks)
 
 // ---------------- input
 const input = { keys: new Set(), l: false, r: false, lookX: 0, lookY: 0, zoom: 0, press: [], jump: false, cycle: 0, target: undefined, targetId: null, downX: 0, downY: 0, moved: 0 };
@@ -70,16 +74,26 @@ function frameNow() {
   input.jump = false; input.cycle = 0; input.target = undefined;
   return f;
 }
-function sendInput() { if (playing()) net.send({ t: 'input', f: frameNow() }); }
+// Without prediction (watching, the autopilot, ?predict=0) the latest frame goes out 30 times a second and at once on a press.
+// With it, the predictor samples one frame per tick and sends it stamped with that tick (self.js); presses wait for it.
+function sendInput() { if (playing() && !(self && self.ready)) net.send({ t: 'input', f: frameNow() }); }
 setInterval(sendInput, 1000 / 30);
+function newSelf() {
+  self = null; if (!PREDICT || !S.you || !S.enc) return;
+  self = new SelfSim({ net, you: S.you, boss: S.enc.boss, nm: !!S.enc.nm, cls: (meM() || {}).cls || store.get('cls', 'duskblade'),
+    sample: () => playing() ? frameNow() : { mx: 0, mz: 0, held: 0, press: [] },
+    cue: (n, a) => { if (S.view) S.view.cue(n, a, S.you, S.you); } });
+}
+net.cueFilter = (c) => !self || self.keep(c);
+net.on('own', (m) => { if (self && m.me) self.own(m.me, m.s); });
 
 // ---------------- network events
 net.on('open', () => { S.phase = 'lobby'; render(); });
 net.on('close', () => { S.phase = 'offline'; render(); if (!net.closedByUs) setTimeout(() => location.reload(), 4000); });
 net.on('welcome', (m) => { S.catalog = m; S.me = m.id; if (!S.view) { S.view = new View(cv, m); S.view.onUi = (n, a) => { if (n === 'ui.hurtFlash') hurtA = Math.min(1, hurtA + 0.25 + (a[0] || 0) * 1.6); }; } render(); });
 net.on('lobby', (m) => { S.lobby = m; if (m.phase === 'lobby') { S.phase = 'lobby'; S.you = null; S.menu = false; lockOff(); } render(); });
-net.on('start', (m) => { if (S.view) S.view.reset(); S.phase = 'fight'; S.enc = m.enc; S.you = m.you; S.end = null; S.camReset = true; hudKey = ''; banner(''); render(); });
-net.on('end', (m) => { S.end = m; lockOff(); input.l = input.r = false; render(); });
+net.on('start', (m) => { if (S.view) S.view.reset(); S.phase = 'fight'; S.enc = m.enc; S.you = m.you; S.end = null; S.camReset = true; hudKey = ''; banner(''); newSelf(); render(); });
+net.on('end', (m) => { S.end = m; lockOff(); input.l = input.r = false; self = null; render(); });
 net.on('catchup', (m) => { if (S.view) S.view.catchUp(m, net.latest && net.latest.boss && net.latest.boss.pub); });
 net.on('note', (m) => toast(m.text));
 
@@ -124,7 +138,7 @@ function renderMenu() {
     ${training && S.you ? `<p>Change class</p><div class="row">${C.classes.map((c) => `<button data-mcls="${c.id}" style="border-color:${c.color}" class="${me.cls === c.id ? 'on' : ''}">${esc(c.name)}</button>`).join('')}</div>` : ''}
     ${S.you ? `<label class="check"><input type="checkbox" id="mauto" ${me.auto ? 'checked' : ''}> Autopilot plays me</label>` : ''}
     <div class="row"><button id="mend">End the encounter for everyone</button><button id="mback">Back to the fight</button></div>
-    <p class="dim small">Controls: WASD move, hold left mouse to look, hold right mouse to steer, wheel zoom, 1 2 3 Q E R F skills, Space jump, Tab or click to target.</p></div>`;
+    <p class="dim small">Controls: WASD move, hold left mouse to look, hold right mouse to steer, wheel zoom, 1 2 3 Q E R F skills, Space jump, Tab or click to target, F3 network overlay.</p></div>`;
   for (const b of m.querySelectorAll('[data-mcls]')) b.onclick = () => { store.set('cls', b.dataset.mcls); net.send({ t: 'class', cls: b.dataset.mcls }); };
   const ma = $('#mauto'); if (ma) ma.onchange = (e) => net.send({ t: 'auto', on: e.target.checked });
   $('#mend').onclick = () => { net.send({ t: 'end' }); S.menu = false; renderMenu(); };
@@ -162,22 +176,32 @@ function buildHud(s, me, cdef) {
   for (const at of (s.nm && bdef.nmTicks) || bdef.ticks || []) { const t = document.createElement('div'); t.className = 'tick'; t.style.left = (at * 100) + '%'; bar.appendChild(t); }
   $('#bname').textContent = s.boss.name; $('#bname').classList.toggle('nm', !!s.nm);
 }
+// a body's cast at the drawn moment: from the snapshots' cast progress turned into a start tick, so the bar runs on the
+// shared clock (smooth at any frame rate, whatever the packets do) and lines up with the body's animation
+function castAt(W, id, rt, hz) {
+  if (!W) return null;
+  const ea = W.a.ents.find((q) => q.id === id), eb = W.b.ents.find((q) => q.id === id), ca = ea && ea.cast, cb = eb && eb.cast;
+  if (cb) { const t = (rt - (W.b.tick - cb.t * hz)) / hz; if (t >= 0) return { name: cb.name, t: Math.min(t, cb.time), time: cb.time }; }
+  if (ca) { const t = (rt - (W.a.tick - ca.t * hz)) / hz; if (t <= ca.time) return { name: ca.name, t: Math.max(0, t), time: ca.time }; }
+  return null;
+}
 function castBar(key, node, cs) { const on = !!cs; setCls(key + 'on', node, 'on', on); if (!on) return; setSx(key + 'f', node.firstElementChild, cs.t / cs.time); setTxt(key + 'n', node.lastElementChild, cs.name); }
-function hud(s, rdt) {
+// s: the snapshot at the drawn moment (the world), W: the blend around it, pme: your predicted state (or null)
+function hud(s, rdt, W, pme) {
   if (hurtA > 0) { hurtA = Math.max(0, hurtA - rdt * 1.6); $('#hurtv').style.opacity = hurtA.toFixed(2); }
   if (!s) return;
-  const C = S.catalog, b = s.ents.find((e) => e.boss), pub = s.boss.pub || {}, me = s.players.find((p) => p.id === S.you), dummy = s.boss.id === 'dummy';
+  const C = S.catalog, b = s.ents.find((e) => e.boss), pub = s.boss.pub || {}, me = pme || s.players.find((p) => p.id === S.you), dummy = s.boss.id === 'dummy';
   const col = (id) => (C.classes.find((c) => c.id === id) || { color: '#ccc' }).color;
   const cdef = me ? (C.classes.find((c) => c.id === me.cls) || {}) : {};
   const key = s.boss.id + (s.nm ? '!' : '') + ':' + (me ? me.cls : '-'); if (key !== hudKey) { hudKey = key; buildHud(s, me, cdef); }
   // boss
-  if (b) { setSx('bhp', $('#bbar .fill'), b.hp / b.maxHp); setSx('bhpl', $('#bbar .lag'), b.hp / b.maxHp); setTxt('bhpt', $('#bhp'), dummy ? '' : (b.hp / b.maxHp * 100).toFixed(1) + '%'); castBar('bc', $('#bcast'), b.cast); }
+  if (b) { setSx('bhp', $('#bbar .fill'), b.hp / b.maxHp); setSx('bhpl', $('#bbar .lag'), b.hp / b.maxHp); setTxt('bhpt', $('#bhp'), dummy ? '' : (b.hp / b.maxHp * 100).toFixed(1) + '%'); castBar('bc', $('#bcast'), castAt(W, b.id, net.renderTick, net.hz)); }
   setTxt('binfo', $('#bossInfo'), pub.split && pub.call ? `calls ${pub.call.tone === 'w' ? 'white' : 'black'} + ${PIG_NAME[pub.call.col]}` : '');
   setTxt('enr', $('#enrage'), dummy ? '' : fmt(s.t)); setCls('enrh', $('#enrage'), 'hot', !!s.boss.enraged);
   // your target, when it is not the boss
   const t = me && me.target !== null ? s.ents.find((e) => e.id === me.target) : null, showT = !!(t && !t.boss && t.alive);
   setCls('tf', $('#tgtframe'), 'on', showT);
-  if (showT) { setTxt('tn', $('#tname'), t.name); setSx('thp', $('#tbar .fill'), t.hp / t.maxHp); castBar('tc', $('#tcast'), t.cast); }
+  if (showT) { setTxt('tn', $('#tname'), t.name); setSx('thp', $('#tbar .fill'), t.hp / t.maxHp); castBar('tc', $('#tcast'), castAt(W, t.id, net.renderTick, net.hz)); }
   // party and the meter, ten times a second
   if ((cache.partyT = (cache.partyT || 0) - rdt) <= 0) { cache.partyT = 0.1; party(s, pub, col); }
   mine(s, me, cdef, pub, rdt);
@@ -231,10 +255,13 @@ function plates(s) {
 let last = performance.now();
 function loop(now) {
   requestAnimationFrame(loop);
-  const dt = Math.min(0.1, (now - last) / 1000); last = now;
-  net.advance(dt);
-  const v = S.view; if (!v || S.phase !== 'fight' || net.clock === null) return;
-  const hz = net.hz, tRender = net.clock - INTERP * hz, A = net.at(tRender), B = net.at(net.clock - SELF_INTERP * hz);
+  const real = Math.min(1, Math.max(0, (now - last) / 1000)), dt = Math.min(0.1, real); last = now;
+  net.advance(real); // the clocks keep real time through a slow frame (the drawing's own effects take the clamped dt)
+  if (self) self.update(real);
+  overlay(dt);
+  const v = S.view; if (!v || S.phase !== 'fight' || net.renderTick === null) return;
+  const tRender = net.renderTick, A = net.at(tRender), pred = self && self.ready ? self.view() : null;
+  const B = pred || net.at(net.serverNow() - 1.5); // not predicting: your character with a short delay, as before
   if (!A) return;
   if (S.camReset) { const me = A.b.players.find((p) => p.id === S.you), c = v.camFor(A.b.boss.id); v.cam.yaw = me ? me.facing : Math.PI; v.cam.pitch = c.pitch; v.cam.tDist = v.cam.dist = c.dist; S.camReset = false; }
   for (const c of net.dueCues(tRender)) {
@@ -243,11 +270,29 @@ function loop(now) {
     else if (c.name === 'fight.down') { const p = net.latest && net.latest.players.find((q) => q.id === c.args[0]); if (p) toast(`${p.name || 'A player'} is down (${c.args[1]}).`); }
     else v.cue(c.name, c.args, c.actor, S.you);
   }
-  input.targetId = (net.latest && net.latest.players.find((p) => p.id === S.you) || {}).target;
+  const mine = pred ? self.hud() : null;
+  input.targetId = mine ? mine.target : (net.latest && net.latest.players.find((p) => p.id === S.you) || {}).target;
   v.draw(dt, A.a, A.b, A.k, B, S.you, input);
-  hud(net.latest, dt);
-  plates(net.latest);
+  hud(A.b, dt, A, mine);
+  plates(A.b);
   $('#ping').textContent = net.rtt ? Math.round(net.rtt * 1000) + ' ms' : '';
 }
+
+// ---------------- the network overlay (F3, or ?net=1): ping, jitter, the render delay, the prediction's lead and corrections
+const dbg = document.createElement('div'); dbg.id = 'netdbg'; dbg.hidden = QS.get('net') !== '1'; document.body.appendChild(dbg);
+addEventListener('keydown', (e) => { if (e.code === 'F3' || (e.code === 'Backquote' && !typing(e))) { e.preventDefault(); dbg.hidden = !dbg.hidden; } });
+let dbgT = 0, kbT = performance.now(), kb0 = 0, kbps = 0;
+function netStats() { const n = net.stats(), p = self ? self.stats() : null; return { net: n, self: p, kbps }; }
+function overlay(dt) {
+  if ((dbgT -= dt) > 0) return; dbgT = 0.25;
+  const t = performance.now(); if (t - kbT > 1000) { kbps = (net.bytes - kb0) / (t - kbT); kb0 = net.bytes; kbT = t; }
+  if (dbg.hidden) return;
+  const { net: n, self: p } = netStats(), f = (v, d = 0) => v === null || v === undefined ? '-' : v.toFixed(d);
+  dbg.innerHTML = `<b>net</b> ping ${f(n.rtt)} ms · jitter ${f(n.jitter)} ms · ${n.snapHz} snaps/s · ${f(kbps, 0)} kB/s
+    <br>world drawn ${f(n.behind)} ms behind (buffer ${f(n.delay)} ms)${n.sim ? ` · <span class="sim">simulated line ${n.sim.lag} ms ±${n.sim.jitter} ms, ${n.sim.loss}% loss</span>` : ''}
+    <br>${p && p.on ? `<b>you</b> predicted ${f(p.ahead)} ms ahead · inputs arrive ${f(p.ia)} ms early (${p.late} late, ${p.miss} missed ticks)
+    <br>correction now ${f(p.corrNow * 100, 1)} cm · last ${f(p.corrLast * 100, 1)} cm · max 5 s ${f(p.corrMax5s * 100, 1)} cm · cast ${f(p.castCorr)} ms · ${p.mispredicts} mispredicts` : `<b>you</b> ${PREDICT ? 'not predicted (watching or autopilot)' : 'prediction off (?predict=0)'}`}`;
+}
+
 requestAnimationFrame(loop);
 render();

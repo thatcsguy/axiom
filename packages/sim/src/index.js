@@ -11,5 +11,6 @@ export { MELEE } from './classes.js';
 export { Bot, emptyFrame } from './bot.js';
 export { TICK_HZ, MAX_PLAYERS, hpScale, startFight, tick, tickAll, applyInput, addPlayer, removePlayer, swapClass, playerById, nightmareDef, currentFight, over } from './fight.js';
 export { stateHash } from './hash.js';
-export { snapshot } from './snapshot.js';
+export { snapshot, playerSnap } from './snapshot.js';
+export { ownState, applyOwnState, Predictor } from './predict.js';
 export { record, replay } from './replay.js';

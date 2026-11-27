@@ -2,8 +2,8 @@
 // The lobby on the main thread sends it input and roster changes, and relays the snapshot message it posts every tick to
 // the room's sockets as is (it is already a JSON string).
 //
-// In:  start { setup, speed } | input { key, f } | auto { key, on } | join { entry } | leave { key } | swap { key, cls } | catchup { key } | test { ... } | stop
-// Out: started { ids: [[key, simId]], hz } | snap { data } | joined { key, you } | catchup { key, data } | end { result, ft, stats } | error { msg }
+// In:  start { setup, speed } | input { key, f } | frames { key, k, fs } | auto { key, on } | join { entry } | leave { key } | swap { key, cls } | catchup { key } | test { ... } | stop
+// Out: started { ids: [[key, simId]], hz } | snap { data, own: [[key, json]] } | joined { key, you } | catchup { key, data } | end { result, ft, stats } | error { msg }
 import { parentPort } from 'node:worker_threads';
 import { FightRunner } from './runner.js';
 import { G } from '@axiom/sim';
@@ -16,7 +16,7 @@ function loop() {
     if (!run) return;
     let n = 0; const now = performance.now();
     while (now >= next && n < 5 * speed) { run.step(); next += ms; n++; if (run.finished) break; }
-    if (n) parentPort.postMessage({ t: 'snap', data: run.message() }); // at speed > 1 (tests), one snapshot per wake
+    if (n) parentPort.postMessage({ t: 'snap', data: run.message(), own: run.own() }); // at speed > 1 (tests), one snapshot per wake
     if (run.finished) { const r = run; parentPort.postMessage({ t: 'end', result: r.result, ft: G.ft, stats: r.stats(), errors: G.errors.slice(0, 5) }); r.stop(); run = null; return; }
     if (now - next > 1000) next = now; // fell far behind (a paused process): skip ahead rather than racing
     timer = setTimeout(wake, Math.max(0, next - performance.now()));
@@ -32,6 +32,7 @@ parentPort.on('message', (m) => {
       loop();
     } else if (!run) return;
     else if (m.t === 'input') run.input(m.key, m.f);
+    else if (m.t === 'frames') run.frames(m.key, m.k, m.fs);
     else if (m.t === 'auto') run.auto(m.key, m.on);
     else if (m.t === 'join') parentPort.postMessage({ t: 'joined', key: m.entry.key, you: run.join(m.entry) });
     else if (m.t === 'leave') run.leave(m.key);

@@ -7,17 +7,24 @@
 //   { t: 'start', boss, nm }                pick an encounter: everyone in the lobby loads in. A boss locks the room until it ends;
 //                                           the training dummy does not (people can walk in, change class, walk out)
 //   { t: 'end' }                            end the encounter for everyone (back to the lobby)
-//   { t: 'input', f: <input frame> }        sent every tick while playing; presses and jumps are kept until the next sim tick
+//   { t: 'frames', k, fs: [<input frame>] } the predicting client, once per tick: the frames for ticks k - fs.length + 1 .. k
+//                                           (the newest three, so a late message costs nothing). The server applies each on its
+//                                           own tick, exactly as the client predicted (packages/client/src/self.js)
+//   { t: 'input', f: <input frame> }        without prediction (tools, fake clients): the latest frame; presses and jumps are
+//                                           kept until the next sim tick
 //   { t: 'auto', on }                       hand your character to the autopilot (or take it back)
 //   { t: 'addBot', cls } / { t: 'dropBot', id }   lobby: fill a seat with a server-side bot
-//   { t: 'ping', c }                        answered with { t: 'pong', c }
+//   { t: 'ping', c }                        answered with { t: 'pong', c } (once a second)
 // Server -> client
 //   { t: 'welcome', v, id, room, tickHz, classes, bosses }
 //   { t: 'lobby', room, phase: 'lobby' | 'fight', enc, members: [{ id, name, cls, bot, inFight, sim }] }
 //   { t: 'start', enc, you, tickHz }        the encounter is loading; `you` is your character's id in snapshots (null: watching)
 //   { t: 'joined', you }                    you walked into a running training dummy, or changed class there
-//   { t: 'snap', s: <snapshot>, c: [[cue, args, actor?], ...] }   once per tick: the whole picture, and the cues of that tick
-//                                           (actor: the id of the player whose action raised the cue, when one did)
+//   { t: 'snap', s: <snapshot>, c: [[cue, args, actor?], ...], me? }   once per tick: the whole picture, and the cues of that
+//                                           tick (actor: the id of the player whose action raised the cue, when one did).
+//                                           me (only in a player's own copy): { k: tick, id, cls, bot, st: their character's whole
+//                                           state (sim ownState), ia: how many ticks early their frames arrive (lower tenth of the
+//                                           last 2 s), late, miss: frames too late for their tick, ticks with no frame }
 //   { t: 'end', result: 'win' | 'dead' | 'ended', ft, stats }
 //   { t: 'note', text }                     something the player should read (a refused request, a locked room)
 export const PROTOCOL_VERSION = 2;

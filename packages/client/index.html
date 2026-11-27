@@ -58,6 +58,8 @@
   #menu .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; width: min(480px, 100%); } #menu h3 { margin: 0 0 8px; letter-spacing: 0.14em; }
   body.cine::before, body.cine::after { content: ''; position: fixed; left: 0; right: 0; height: 9vh; background: #000; z-index: 2; } body.cine::before { top: 0; } body.cine::after { bottom: 0; }
   body.cine #hud { opacity: 0; }
+  #netdbg { position: fixed; left: 12px; bottom: 12px; z-index: 8; background: rgba(8, 9, 14, 0.82); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; font: 12px/1.5 ui-monospace, Consolas, monospace; color: #d8d4ca; pointer-events: none; max-width: calc(100vw - 24px); }
+  #netdbg b { color: var(--gold); font-weight: 600; } #netdbg .sim { color: #ff9a6a; }
   @media (max-width: 720px) { #party { top: 80px; width: 140px; } #meter { top: auto; bottom: 190px; right: 8px; width: 200px; } .slot { width: 44px; height: 44px; } .slot svg { width: 26px; height: 26px; } #banner { font-size: 34px; } }
 </style>
 </head>

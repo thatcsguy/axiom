@@ -6,9 +6,11 @@
 // client): the studio, the lay figure, the floor canvas and its paint job, every material and shader, the finale's look
 // (nmLook), the kill cinematic. What the view needs is in b.pub (update, below) and the 'atelier.lay' cue for each stroke.
 //
-// Still single-player: the mechanics aim at G.player, and "what you wear" (S.wear) is one value. Both become per-player in
-// plan step 3; with several players a Critique judges each one (docs/plan.md, "Hits").
-import { G, Co, rnd, pick, shuffle, vrand } from '../core.js';
+// Several players (Axiom, plan step 3): each player wears their own paint (S.pw[id]); the strokes, splatters, drips, knife
+// cuts and the roller aim at the players in turn (b.nextTarget()); a Blot chases the nearest; a Critique judges everyone: those
+// who do not match take the blow, and he is knocked down only when every standing player matches. With one player all of it
+// is exactly the single-player fight.
+import { G, Co, rnd, pick, shuffle, vrand, livePlayers, nearestPlayer } from '../core.js';
 import { V3, TAU, PI, clamp, lerp, smooth, dampAng } from '../math.js';
 import { Hz } from '../combat.js';
 import { FX, Sound, Music, Post, Cam, View } from '../view.js';
@@ -26,9 +28,11 @@ import { Bot } from '../bot.js';
   const wantWear = (c) => c.tone === 'w' ? c.col : 7 ^ c.col, wantSide = (c) => c.tone === 'w' ? 1 : -1;
   const sideAt = (A, x, z) => { const s = x * Math.cos(A) - z * Math.sin(A); return s > SEAM ? 1 : s < -SEAM ? -1 : 0; };
   const sideOf = (S, x, z) => sideAt(S.lineA, x, z);
+  // what one player is wearing (pigment bits), created on first use
+  const pw = (S, p) => S.pw[p.id] || (S.pw[p.id] = { wear: 0, wearK: 0, match: 0, mul: 1 });
   const need = (S) => S.split && S.call ? wantWear(S.call) : S.neg ? 7 ^ S.col : S.col; // in the negative the rule inverts with the world
   // the rule, at a point: the right paint (and, in the finale, the called half)
-  const matched = (S, x, z) => S.wear === need(S) && (!S.split || !S.call || sideOf(S, x, z) === wantSide(S.call));
+  const matched = (S, p) => pw(S, p).wear === need(S) && (!S.split || !S.call || sideOf(S, p.pos.x, p.pos.z) === wantSide(S.call));
   // damage never depends on paint (paint only decides a Critique): a flat DMG_BASE, and in the nightmare finale WRONG_SIDE while you
   // stand outside the called half (the seam strip counts as outside)
   const DMG_BASE = 1.0, WRONG_SIDE = 0.1;
@@ -60,7 +64,7 @@ import { Bot } from '../bot.js';
   // floor canvas, the roller and the varnish shell are all the view half (client).
   function build(b) {
     const S = b.state;
-    Object.assign(S, { pig: new Uint8Array(GN * GN), dryAt: new Float32Array(GN * GN), strokes: [], baked: [], seed: 11, neg: false, col: RED, wear: 0, wearK: 0, lvl: 0, wash: { x: 0, z: 16.2, r: 2.5 }, roll: null, down: 0, swing: 0, look: 0, lookT: 0, bag: [], dryT: 0, flood: 0, blots: 0, blotList: [], match: 0 });
+    Object.assign(S, { pig: new Uint8Array(GN * GN), dryAt: new Float32Array(GN * GN), strokes: [], baked: [], seed: 11, neg: false, col: RED, pw: {}, lvl: 0, wash: { x: 0, z: 16.2, r: 2.5 }, roll: null, down: 0, swing: 0, look: 0, lookT: 0, bag: [], dryT: 0, flood: 0, blots: 0, blotList: [] });
     if (G.nightmare) nmBuild(b, S);
     return {
       edge: 'wall', radius: R, spawn: { x: 0, z: 12 }, bossStart: { x: 0, z: -3, face: 0 }, camDist: 17, camPitch: 0.55,
@@ -75,7 +79,7 @@ import { Bot } from '../bot.js';
 
   const nextPig = (S) => { if (!S.bag.length) S.bag = shuffle([RED, YEL, BLU]); return S.bag.pop(); };
   // (finale: nothing tints you while you stand in the dish)
-  function tint(S, m, loud) { if ((S.wear | m) === S.wear || (S.split && inWash(S, G.player))) return; S.wear |= m; S.wearK = 1; if (loud !== false) Sound.sfx('wave', 0.5, 1.5); }
+  function tint(S, p, m, loud) { const w = pw(S, p); if ((w.wear | m) === w.wear || (S.split && inWash(S, p))) return; w.wear |= m; w.wearK = 1; if (loud !== false) Sound.sfx('wave', 0.5, 1.5); }
   function* recolor(b, c) {
     const S = b.state; S.flood = 1;
     yield* b.cast({ name: 'Fresh Coat', time: 1.3 }); S.col = c; S.flood = 0; Sound.sfx('wave', 0.9, 0.7); FX.flash(HEX[c], 0.16, 3);
@@ -83,56 +87,61 @@ import { Bot } from '../bot.js';
   }
   function stripe(b, m, x, z, a, w, delay, dmg, name) {
     const S = b.state, x0 = x - Math.sin(a) * 22, z0 = z - Math.cos(a) * 22;
-    Hz.rect(x0, z0, a, 44, w, delay, dmg, { name, color: tel(S), onFire() { lay(S, { t: 'r', x: x0, z: z0, dir: a, len: 44, w, m }); S.swing = 1; if (!G.headless && m) FX.burst(x, 0.4, z, { n: 24, color: HEX[m], speed: [2, 9], life: [0.3, 0.8] }); }, onHit() { if (m && S.lvl >= 1) tint(S, m); } });
+    Hz.rect(x0, z0, a, 44, w, delay, dmg, { name, color: tel(S), onFire() { lay(S, { t: 'r', x: x0, z: z0, dir: a, len: 44, w, m }); S.swing = 1; if (!G.headless && m) FX.burst(x, 0.4, z, { n: 24, color: HEX[m], speed: [2, 9], life: [0.3, 0.8] }); }, onHit(h, t, p) { if (m && S.lvl >= 1) tint(S, p, m); } });
   }
   function* strokes(b, pigs) {
-    const S = b.state, p = G.player; let a = rnd(0, PI);
-    for (const m of pigs) { yield* b.cast({ name: 'Stroke', time: 0.45 }); stripe(b, m, p.pos.x + rnd(-1.5, 1.5), p.pos.z + rnd(-1.5, 1.5), a, 3, 1.0, 280, 'Stroke'); a += PI / 3 + rnd(-0.3, 0.3); yield 0.75; }
+    const S = b.state; let a = rnd(0, PI);
+    for (const m of pigs) { yield* b.cast({ name: 'Stroke', time: 0.45 }); const p = b.nextTarget(); stripe(b, m, p.pos.x + rnd(-1.5, 1.5), p.pos.z + rnd(-1.5, 1.5), a, 3, 1.0, 280, 'Stroke'); a += PI / 3 + rnd(-0.3, 0.3); yield 0.75; }
     yield 0.7;
   }
   function* splatter(b, n) {
-    const S = b.state, p = G.player; yield* b.cast({ name: 'Splatter', time: 0.7 });
-    for (let i = 0; i < n; i++) { const m = nextPig(S), a = rnd(0, TAU), d = i === 0 ? 0 : rnd(3, 8), x = clamp(p.pos.x + Math.sin(a) * d, -17, 17), z = clamp(p.pos.z + Math.cos(a) * d, -17, 17);
-      Hz.circle(x, z, 2.6, 1.25, 220, { name: 'Splatter', color: tel(S), onFire() { lay(S, { t: 'c', x, z, r: 2.6, m }); }, onHit() { if (S.lvl >= 1) tint(S, m); } }); yield 0.28; }
+    const S = b.state; yield* b.cast({ name: 'Splatter', time: 0.7 });
+    for (let i = 0; i < n; i++) { const p = b.nextTarget(), m = nextPig(S), a = rnd(0, TAU), d = i === 0 ? 0 : rnd(3, 8), x = clamp(p.pos.x + Math.sin(a) * d, -17, 17), z = clamp(p.pos.z + Math.cos(a) * d, -17, 17);
+      Hz.circle(x, z, 2.6, 1.25, 220, { name: 'Splatter', color: tel(S), onFire() { lay(S, { t: 'c', x, z, r: 2.6, m }); }, onHit(h, t, q) { if (S.lvl >= 1) tint(S, q, m); } }); yield 0.28; }
     yield 1.1;
   }
   function* drips(b, n) {
-    const S = b.state, p = G.player;
-    for (let i = 0; i < n; i++) { const m = nextPig(S), a = rnd(0, TAU), d = rnd(1, 9), x = p.pos.x + Math.sin(a) * d, z = p.pos.z + Math.cos(a) * d; if (Math.hypot(x, z) > R - 1) continue;
-      Hz.circle(x, z, 1.7, 2.0, 160, { name: 'Drip', color: tel(S), quiet: true, onFire() { lay(S, { t: 'c', x, z, r: 1.7, m }); }, onHit() { if (S.lvl >= 1) tint(S, m); } }); yield 0.4; }
+    const S = b.state;
+    for (let i = 0; i < n; i++) { const p = b.nextTarget(), m = nextPig(S), a = rnd(0, TAU), d = rnd(1, 9), x = p.pos.x + Math.sin(a) * d, z = p.pos.z + Math.cos(a) * d; if (Math.hypot(x, z) > R - 1) continue;
+      Hz.circle(x, z, 1.7, 2.0, 160, { name: 'Drip', color: tel(S), quiet: true, onFire() { lay(S, { t: 'c', x, z, r: 1.7, m }); }, onHit(h, t, q) { if (S.lvl >= 1) tint(S, q, m); } }); yield 0.4; }
   }
   function* roller(b) {
-    const S = b.state, p = G.player, m = nextPig(S), a = rnd(0, TAU), fx = Math.sin(a), fz = Math.cos(a), off = clamp(p.pos.x * fz - p.pos.z * fx, -9, 9), cx = fz * off, cz = -fx * off;
+    const S = b.state, p = b.nextTarget(), m = nextPig(S), a = rnd(0, TAU), fx = Math.sin(a), fz = Math.cos(a), off = clamp(p.pos.x * fz - p.pos.z * fx, -9, 9), cx = fz * off, cz = -fx * off;
     yield* b.cast({ name: 'Roller', time: 0.8 }); Hz.rect(cx - fx * 22, cz - fz * 22, a, 44, 12, 1.3, 0, { name: 'Roller', color: tel(S), quiet: true });
-    S.roll = { a, fx, fz, cx, cz, s: -24, v: 11, m, hit: false, laid: -22 }; yield 1.3; Sound.sfx('wave', 0.8, 0.5);
+    S.roll = { a, fx, fz, cx, cz, s: -24, v: 11, m, hit: {}, laid: -22 }; yield 1.3; Sound.sfx('wave', 0.8, 0.5);
     const q = S.roll; while (q.s < 22) { q.s += q.v * G.dt;
-      if (p.alive && !q.hit && p.pos.y < 0.5) { const dx = p.pos.x - q.cx, dz = p.pos.z - q.cz, al = dx * fx + dz * fz, sd = dx * fz - dz * fx; if (Math.abs(al - q.s) < 1.0 && Math.abs(sd) < 6) { q.hit = true; p.hurt(300, { blockable: true, kb: { dir: a, dist: 4 }, src: { name: 'Roller' } }); if (S.lvl >= 1) tint(S, m); } }
+      for (const p of G.players) if (p.alive && !q.hit[p.id] && p.pos.y < 0.5) { const dx = p.pos.x - q.cx, dz = p.pos.z - q.cz, al = dx * fx + dz * fz, sd = dx * fz - dz * fx; if (Math.abs(al - q.s) < 1.0 && Math.abs(sd) < 6) { q.hit[p.id] = 1; p.hurt(300, { blockable: true, kb: { dir: a, dist: 4 }, src: { name: 'Roller' } }); if (S.lvl >= 1) tint(S, p, m); } }
       if (q.s - q.laid >= 5.5 || q.s >= 22) { const e = Math.min(q.s - 1, 22); if (e > q.laid) { lay(S, { t: 'r', x: q.cx + fx * q.laid, z: q.cz + fz * q.laid, dir: a, len: e - q.laid, w: 12, m }); q.laid = e; } }
       yield; }
     S.roll = null; yield 0.5;
   }
   function* knife(b) {
-    const S = b.state, p = G.player; let a = rnd(0, PI);
+    const S = b.state; let a = rnd(0, PI);
     yield* b.cast({ name: 'Palette Knife', time: 0.7 });
-    for (let i = 0; i < 3; i++) { stripe(b, 0, p.pos.x + rnd(-2, 2), p.pos.z + rnd(-2, 2), a, 2.4, 0.95, 260, 'Palette Knife'); a += PI / 3; yield 0.5; }
+    for (let i = 0; i < 3; i++) { const p = b.nextTarget(); stripe(b, 0, p.pos.x + rnd(-2, 2), p.pos.z + rnd(-2, 2), a, 2.4, 0.95, 260, 'Palette Knife'); a += PI / 3; yield 0.5; }
     yield 1.0;
   }
   function blot(b, m) {
     const S = b.state; if (S.blots >= 2) return; S.blots++; const a = rnd(0, TAU), x = Math.sin(a) * 15, z = Math.cos(a) * 15;
     let lt = 0, cd = 0;
     const ent = b.spawnAdd({ name: 'Blot', hp: 280, x, z, radius: 0.85, aimY: 0.8, color: HEX[m], pig: m, onDeath(e) { S.blots--; S.blotList = S.blotList.filter((q) => q !== e); lay(S, { t: 'c', x: e.pos.x, z: e.pos.z, r: 2.2, m }); },
-      update(e, dt) { const p = G.player, d = Math.hypot(p.pos.x - e.pos.x, p.pos.z - e.pos.z); if (d > 0.9) { e.pos.x += (p.pos.x - e.pos.x) / d * 3.1 * dt; e.pos.z += (p.pos.z - e.pos.z) / d * 3.1 * dt; }
-        lt -= dt; if (lt <= 0) { lt = 0.55; lay(S, { t: 'c', x: e.pos.x, z: e.pos.z, r: 1.05, m }); } if (d < 1.35 && cd <= 0 && p.alive && e.alive) { cd = 9; p.hurt(140, { blockable: true, src: { name: 'Blot' } }); tint(S, m); e.damage(e.hp + 1, { src: 'self' }); } } });
+      update(e, dt) { const p = nearestPlayer(e.pos.x, e.pos.z), d = Math.hypot(p.pos.x - e.pos.x, p.pos.z - e.pos.z); if (d > 0.9) { e.pos.x += (p.pos.x - e.pos.x) / d * 3.1 * dt; e.pos.z += (p.pos.z - e.pos.z) / d * 3.1 * dt; }
+        lt -= dt; if (lt <= 0) { lt = 0.55; lay(S, { t: 'c', x: e.pos.x, z: e.pos.z, r: 1.05, m }); } if (d < 1.35 && cd <= 0 && p.alive && e.alive) { cd = 9; p.hurt(140, { blockable: true, src: { name: 'Blot' } }); tint(S, p, m); e.damage(e.hp + 1, { src: 'self' }); } } });
     S.blotList.push(ent); Sound.sfx('cast', 0.5, 0.6);
   }
   // o (nightmare signature only): stagger false = a matched verdict deals its blow without knocking him down; quick = no pause after
   function* critique(b, T, o) {
-    const S = b.state, p = G.player, stag = !o || o.stagger !== false; S.crit = T;
+    const S = b.state, stag = !o || o.stagger !== false; S.crit = T;
     yield* b.cast({ name: 'Critique', time: T, onTick(k, cs) { S.crit = T - cs.t; } }); S.crit = 0;
-    if (S.split && S.critLog.length) Object.assign(S.critLog[S.critLog.length - 1], { ok: matched(S, p.pos.x, p.pos.z), vw: S.wear, vs: sideOf(S, p.pos.x, p.pos.z) }); // the verdict, for tools/critfuzz.js
-    if (!stag && matched(S, p.pos.x, p.pos.z)) { Sound.sfx('shatter', 0.8, 1.1); FX.flash(0xffffff, 0.14, 4); b.damage(Math.round(b.maxHp * 0.03), { src: 'player', crit: true }); if (!G.headless) FX.burst(b.pos.x, 3, b.pos.z, { n: 30, color: HEX[S.wear] || 0xffffff, color2: 0xffffff, speed: [4, 10], life: [0.3, 0.8], size: [0.2, 0.5], drag: 2.2 }); }
-    else if (matched(S, p.pos.x, p.pos.z)) { S.down = 5; b.exposed = 5; Sound.sfx('shatter', 0.9, 0.9); Sound.sfx('parry', 0.9, 0.6); FX.flash(0xffffff, 0.2, 3); FX.shake(0.5); b.damage(Math.round(b.maxHp * 0.03), { src: 'player', crit: true }); if (!G.headless) { const c = HEX[S.wear] || 0xffffff; FX.burst(b.pos.x, 3, b.pos.z, { n: 46, color: c, color2: 0xffffff, speed: [4, 11], life: [0.4, 1.0], size: [0.25, 0.7], drag: 2.2 }); FX.burst(b.pos.x, 2.5, b.pos.z, { n: 10, smoke: true, color: 0xe8e0d0, color2: 0xc8beb0, speed: [1, 3], life: [0.8, 1.6], size: [1, 2.2], up: 1.5, alpha: 0.28, drag: 1.5 }); FX.ring(b.pos.x, b.pos.z, { r0: 0.3, r1: 6, color: c, dur: 0.5, width: 0.16 }); FX.light(b.pos.x, 4, b.pos.z, c, 60, 0.4, 15); } yield 5; S.down = 0; }
-    else { if (p.alive) p.hurt(350, { blockable: false, src: { name: 'Critique' } }); Sound.sfx('bigboom', 0.7); FX.flash(tel(S), 0.25, 2); FX.shake(0.6); if (!G.headless) FX.beam(new V3(b.pos.x, 4, b.pos.z), new V3(p.pos.x, 1, p.pos.z), { color: S.neg || (S.split && sideOf(S, p.pos.x, p.pos.z) < 0) ? 0xffffff : 0x202028, width: 0.9, dur: 0.35 }); if (stag) yield 1.0; }
+    // every standing player is judged; he goes down only when all of them match
+    const L = livePlayers(), all = L.length > 0 && L.every((q) => matched(S, q)), p = b.focusPlayer(), pc = HEX[pw(S, p).wear] || 0xffffff;
+    if (S.split && S.critLog.length) Object.assign(S.critLog[S.critLog.length - 1], { ok: matched(S, p), vw: pw(S, p).wear, vs: sideOf(S, p.pos.x, p.pos.z) }); // the verdict, for tools/critfuzz.js
+    if (!stag && all) { Sound.sfx('shatter', 0.8, 1.1); FX.flash(0xffffff, 0.14, 4); b.damage(Math.round(b.maxHp * 0.03), { src: 'player', crit: true }); if (!G.headless) FX.burst(b.pos.x, 3, b.pos.z, { n: 30, color: pc, color2: 0xffffff, speed: [4, 10], life: [0.3, 0.8], size: [0.2, 0.5], drag: 2.2 }); }
+    else if (all) { S.down = 5; b.exposed = 5; Sound.sfx('shatter', 0.9, 0.9); Sound.sfx('parry', 0.9, 0.6); FX.flash(0xffffff, 0.2, 3); FX.shake(0.5); b.damage(Math.round(b.maxHp * 0.03), { src: 'player', crit: true }); if (!G.headless) { const c = pc; FX.burst(b.pos.x, 3, b.pos.z, { n: 46, color: c, color2: 0xffffff, speed: [4, 11], life: [0.4, 1.0], size: [0.25, 0.7], drag: 2.2 }); FX.burst(b.pos.x, 2.5, b.pos.z, { n: 10, smoke: true, color: 0xe8e0d0, color2: 0xc8beb0, speed: [1, 3], life: [0.8, 1.6], size: [1, 2.2], up: 1.5, alpha: 0.28, drag: 1.5 }); FX.ring(b.pos.x, b.pos.z, { r0: 0.3, r1: 6, color: c, dur: 0.5, width: 0.16 }); FX.light(b.pos.x, 4, b.pos.z, c, 60, 0.4, 15); } yield 5; S.down = 0; }
+    else {
+      for (const q of L) if (!matched(S, q)) { q.hurt(350, { blockable: false, src: { name: 'Critique' } }); if (!G.headless) FX.beam(new V3(b.pos.x, 4, b.pos.z), new V3(q.pos.x, 1, q.pos.z), { color: S.neg || (S.split && sideOf(S, q.pos.x, q.pos.z) < 0) ? 0xffffff : 0x202028, width: 0.9, dur: 0.35 }); }
+      Sound.sfx('bigboom', 0.7); FX.flash(tel(S), 0.25, 2); FX.shake(0.6); if (stag) yield 1.0;
+    }
   }
   function* wander(b) { const a = rnd(0, TAU), d = rnd(0, 6); yield* b.moveTo(Math.sin(a) * d, Math.cos(a) * d, 5); }
   // one colour's worth of fight: he floods with it, lays down what you need and what you must not touch, then judges you
@@ -189,13 +198,13 @@ import { Bot } from '../bot.js';
   // rest, never the same tone three times running and never a call you already answer where you stand
   const CALLS = []; for (const tone of ['w', 'b']) for (let col = 1; col <= 6; col++) CALLS.push({ tone, col });
   function nextCall(b) {
-    const S = b.state, p = G.player, k = S.fk;
+    const S = b.state, k = S.fk;
     let c;
     if (k === 0) c = { tone: 'w', col: pick([RED, YEL, BLU]) };
     else if (k === 1) c = { tone: 'b', col: pick([3, 5, 6]) };
     else if (k === 2) c = { tone: 'w', col: pick([3, 5, 6]) };
     else {
-      const h = S.tones.slice(-2), fine = (q) => !(h.length === 2 && h[0] === q.tone && h[1] === q.tone) && !(p && S.wear === wantWear(q) && sideOf(S, p.pos.x, p.pos.z) === wantSide(q));
+      const h = S.tones.slice(-2), fine = (q) => !(h.length === 2 && h[0] === q.tone && h[1] === q.tone) && !answers(S, q);
       if (!S.cbag.length) S.cbag = shuffle(CALLS.filter((q) => !S.used || !S.used.some((u) => u.tone === q.tone && u.col === q.col)));
       let i = S.cbag.findIndex(fine); if (i < 0) { S.cbag = shuffle(CALLS.slice()); i = S.cbag.findIndex(fine); if (i < 0) i = 0; }
       c = S.cbag.splice(i, 1)[0]; S.used = null;
@@ -203,6 +212,8 @@ import { Bot } from '../bot.js';
     if (k < 3) (S.used || (S.used = [])).push(c);
     return c;
   }
+  // does some standing player already answer this call where they stand? (then it would be a free verdict)
+  const answers = (S, q) => livePlayers().some((p) => pw(S, p).wear === wantWear(q) && sideOf(S, p.pos.x, p.pos.z) === wantSide(q));
   // Fresh Coat: the old swirl drains down off him into the floor, the tone turns (white or black), the new colour winds up from his
   // feet to his head, and a few drops fling off the top. He points the brush at the half he calls.
   function* freshCoat(b, call, quick) {
@@ -263,19 +274,19 @@ import { Bot } from '../bot.js';
   // exactly the missing paint falls next to where you will be, toward the half. The first fix that fits wins, in that order of
   // preference (no move, nearest dish). If none fits (the far rim of the wrong half on a mud call, or a signature call after you
   // lost the paint), the cast is stretched by the shortfall (S.stretch); S.routeFail counts a call with no answer at all (never).
-  function repair(b, call, T) {
-    const S = b.state, p = G.player, lim = T - 0.75, tLand = G.ft + T, nd = wantWear(call), sg = wantSide(call);
+  function repair(b, call, T, p) {
+    const S = b.state, wr = pw(S, p).wear, lim = T - 0.75, tLand = G.ft + T, nd = wantWear(call), sg = wantSide(call);
     const A = S.lineA + S.lineW * T, ca = Math.cos(A), sa = Math.sin(A), px = p.pos.x, pz = p.pos.z;
-    const r0 = route(S, px, pz, S.wear, call, tLand); let r = r0;
+    const r0 = route(S, px, pz, wr, call, tLand); let r = r0;
     const fixes = [];
     if (r0 > lim) {
       const save = S.wash, washes = [null]; let best = null;
-      if (S.wear & ~nd) { const ap = Math.atan2(px, pz); for (const rad of [16.2, 13, 10, 7]) for (let i = 0; i <= 18; i++) for (const sgn of i ? [1, -1] : [1]) { const a = ap + sgn * i * 0.17, wx = Math.sin(a) * rad, wz = Math.cos(a) * rad; if (nd === 0 && sg * (wx * ca - wz * sa) < 2.2) continue; washes.push({ x: wx, z: wz, r: 2.5 }); } }
+      if (wr & ~nd) { const ap = Math.atan2(px, pz); for (const rad of [16.2, 13, 10, 7]) for (let i = 0; i <= 18; i++) for (const sgn of i ? [1, -1] : [1]) { const a = ap + sgn * i * 0.17, wx = Math.sin(a) * rad, wz = Math.cos(a) * rad; if (nd === 0 && sg * (wx * ca - wz * sa) < 2.2) continue; washes.push({ x: wx, z: wz, r: 2.5 }); } }
       for (const W of washes) {
         if (W) S.wash = W;
-        const o = {}; let rw = W ? route(S, px, pz, S.wear, call, tLand, o) : (route(S, px, pz, S.wear, call, tLand, o), r0), dab = null;
-        const m = nd & ~((S.wear & ~nd) ? 0 : S.wear);
-        if (rw > lim && m) for (const dist of [2.6, 1.2, 4]) { const Dd = dabAt(S, o.px, o.pz, sg, ca, sa, dist, m), r2 = route(S, px, pz, S.wear, call, tLand, { dab: Dd }); if (r2 < rw) { rw = r2; dab = Dd; } if (rw <= lim) break; }
+        const o = {}; let rw = W ? route(S, px, pz, wr, call, tLand, o) : (route(S, px, pz, wr, call, tLand, o), r0), dab = null;
+        const m = nd & ~((wr & ~nd) ? 0 : wr);
+        if (rw > lim && m) for (const dist of [2.6, 1.2, 4]) { const Dd = dabAt(S, o.px, o.pz, sg, ca, sa, dist, m), r2 = route(S, px, pz, wr, call, tLand, { dab: Dd }); if (r2 < rw) { rw = r2; dab = Dd; } if (rw <= lim) break; }
         S.wash = save;
         if (!best || rw < best.r) best = { W, dab, r: rw };
         if (rw <= lim) break;
@@ -283,16 +294,16 @@ import { Bot } from '../bot.js';
       if (best.W) { S.wash = best.W; S.washK = 0; S.washT = 0; fixes.push('wash'); if (!G.headless) FX.ring(S.wash.x, S.wash.z, { r0: 0.5, r1: 3.5, color: 0x9fd8f0, dur: 0.5 }); Sound.sfx('heal', 0.4, 0.8); }
       if (best.dab) { const q = best.dab; lay(S, { t: 'c', x: q.x, z: q.z, r: q.r, m: q.m }); fixes.push('paint'); Sound.sfx('wave', 0.6, 1.6);
         if (!G.headless) { FX.burst(q.x, 4, q.z, { n: 26, color: HEX[q.m], color2: 0xffffff, speed: [1, 4], life: [0.3, 0.7], size: [0.15, 0.35], grav: 20 }); FX.ring(q.x, q.z, { r0: 0.4, r1: 2.4, color: HEX[q.m], dur: 0.45 }); } }
-      r = best.dab || best.W ? route(S, px, pz, S.wear, call, tLand) : r0;
+      r = best.dab || best.W ? route(S, px, pz, wr, call, tLand) : r0;
     }
     let ext = 0; if (r > lim) { if (r === Infinity) { ext = 2; S.routeFail++; } else { ext = r - lim; S.stretch = (S.stretch || 0) + 1; } fixes.push('time'); }
-    S.holdWash = G.ft + T + ext + 0.5;
-    S.critLog.push({ call: call.tone + call.col, wear: S.wear, sig: S.sig, r0: r0 === Infinity ? 99 : +r0.toFixed(2), r: r === Infinity ? 99 : +r.toFixed(2), T, fix: fixes.join('+'), stretch: +ext.toFixed(2), fail: r === Infinity });
+    S.critLog.push({ call: call.tone + call.col, wear: wr, sig: S.sig, r0: r0 === Infinity ? 99 : +r0.toFixed(2), r: r === Infinity ? 99 : +r.toFixed(2), T, fix: fixes.join('+'), stretch: +ext.toFixed(2), fail: r === Infinity });
     return ext;
   }
   function* judge(b, call, T, o) {
-    const S = b.state, p = G.player; let ext = 0;
-    if (p && p.alive) ext = repair(b, call, T);
+    const S = b.state; let ext = 0; // every standing player gets the route check; the cast stretches for the slowest
+    for (const p of livePlayers()) ext = Math.max(ext, repair(b, call, T, p));
+    S.holdWash = G.ft + T + ext + 0.5;
     S.faceSide = true; yield* critique(b, T + ext, o); S.faceSide = false;
   }
   // Chiaroscuro ramps by sitting count, two sittings per step (a sitting is about 20 s with its stagger, so a step is about 40 s):
@@ -303,8 +314,8 @@ import { Bot } from '../bot.js';
   const finStepOf = (S) => Math.min(4, Math.floor(S.fk / SIT_PER_STEP));
   // the second call of a pair: the same tone (same half), another colour, never one you already answer where you stand
   function pairCall(b, call) {
-    const S = b.state, p = G.player, list = shuffle([1, 2, 3, 4, 5, 6].filter((c) => c !== call.col)).map((col) => ({ tone: call.tone, col }));
-    return list.find((q) => !(p && S.wear === wantWear(q) && sideOf(S, p.pos.x, p.pos.z) === wantSide(q))) || list[0];
+    const S = b.state, list = shuffle([1, 2, 3, 4, 5, 6].filter((c) => c !== call.col)).map((col) => ({ tone: call.tone, col }));
+    return list.find((q) => !answers(S, q)) || list[0];
   }
   // one sitting: Fresh Coat with the call, three strokes (what the answer needs first), the step's pressure, the route check, Critique
   function* sitting(b, call, T, k) {
@@ -331,7 +342,7 @@ import { Bot } from '../bot.js';
   // the signature, once, under 10%: three fast Critiques with the same answer paint (the one you wear, if it is a colour), the half
   // flipping each time. What he shows changes completely (white + red, black + green, white + red); what you do is keep your red and step.
   function* signature(b) {
-    const S = b.state, p = G.player, N = S.wear >= 1 && S.wear <= 6 ? S.wear : pick([1, 2, 4, 3, 5, 6]);
+    const S = b.state, p = b.focusPlayer(), wr = pw(S, p).wear, N = wr >= 1 && wr <= 6 ? wr : pick([1, 2, 4, 3, 5, 6]);
     const w0 = !p || sideOf(S, p.pos.x, p.pos.z) >= 0, cw = { tone: 'w', col: N }, cb = { tone: 'b', col: 7 ^ N }, seq = w0 ? [cw, cb, cw] : [cb, cw, cb];
     yield* freshCoat(b, seq[0]); S.faceSide = false;
     const nb = bitsOf(N); yield* strokes(b, shuffle(nb.concat([RED, YEL, BLU].filter((m) => nb.indexOf(m) < 0)).slice(0, 3)));
@@ -355,7 +366,7 @@ import { Bot } from '../bot.js';
   function* finEnter(b) {
     const S = b.state; resetMech(b); Object.assign(S, { call: null, fk: 0, tones: [], cbag: [], used: null, sigDone: false, stepAt: [], finStep: 0, lineW: SEAM_W[0] }); Music.intensity(0);
     yield* b.moveTo(0, 0, 7);
-    const p = G.player, a = (p ? Math.atan2(p.pos.x, p.pos.z) : 0) + PI / 2, fx = Math.sin(a), fz = Math.cos(a);
+    const p = b.focusPlayer(), a = (p ? Math.atan2(p.pos.x, p.pos.z) : 0) + PI / 2, fx = Math.sin(a), fz = Math.cos(a);
     S.cine = true; Co.start(Cam.shot([-fx * 25, 15, -fz * 25], [fx * 6, 0, fz * 6], [-fx * 22 + fz * 4, 20, -fz * 22 - fx * 4], [fx * 2, 0, fz * 2], 3.6, 50), 'phase');
     b.facing = a; S.lineA = a;
     yield* b.cast({ name: 'Chiaroscuro', time: 2.2, onTick: (k) => { FX.shake(k * 0.15); } });
@@ -374,7 +385,7 @@ import { Bot } from '../bot.js';
     const S = b.state; resetMech(b); Music.stop(0.1); Sound.sfx('wave', 0.9, 0.35); FX.flash(VARN, 0.25, 1.5);
     const T = 6;
     Hz.circle(0, 0, 80, T, 0, { blockable: false, name: 'Varnish', color: VARN, quiet: true, alpha: 0.35, onFire: () => {
-      const p = G.player; FX.flash(VARN, 0.6, 2); Sound.sfx('bigboom', 0.8); if (p && p.alive) p.hurt(9999, { blockable: false, src: 'enrage', pierce: true });
+      FX.flash(VARN, 0.6, 2); Sound.sfx('bigboom', 0.8); for (const p of livePlayers()) p.hurt(9999, { blockable: false, src: 'enrage', pierce: true });
     } });
     let t = 0; while (t < T) { t += G.dt; S.varnR = (R + 0.6) * (1 - smooth(Math.min(1, t / T))); yield; }
     S.varnR = 0; yield 0.5; while (true) yield 1;
@@ -383,6 +394,8 @@ import { Bot } from '../bot.js';
     id: 'atelier', name: 'PENTIMENTO', title: 'The Unfinished Canvas', hint: 'Wet paint', color: '#f0e8d8', telegraph: INK,
     hp: 31000, radius: 1.5, aimY: 3.6, enrage: 450,
     build,
+    // the nightmare finale's wrong-half cut is per player: each player's hits use their own side (set in update, one tick old as before)
+    takenMul: (b, by) => { const w = by && b.state.pw && b.state.pw[by.id]; return w ? w.mul : 1; },
     *intro(b) { Sound.sfx('wave', 0.7, 0.5); yield* Cam.shot([-14, 22, 26], [0, 2, 0], [4, 4.5, 8], [0, 3.8, -3], 5.2, 46); },
     phases: [
       { at: 1, *run(b) {
@@ -410,26 +423,29 @@ import { Bot } from '../bot.js';
     },
     nmTest: { wantWear, wantSide, sideAt, route: (S, ...a) => route(S, ...a), SEAM_W, SIT_PER_STEP, stepOf: finStepOf },
     update(b, dt) {
-      const S = b.state, p = G.player, fight = G.state === 'fight' && p && p.alive;
+      const S = b.state, fight = G.state === 'fight';
       if (S.down > 0) S.down -= dt; S.washT = (S.washT || 0) + dt; if (S.washT > 18 && !(S.split && S.holdWash > G.ft)) { S.washT = 0; moveWash(S); } // finale: the dish holds still while a Critique it answers is cast
-      if (fight) {
+      if (fight) for (const p of G.players) {
+        if (!p.alive) continue; const w = pw(S, p);
         const inWash = Math.hypot(p.pos.x - S.wash.x, p.pos.z - S.wash.z) < S.wash.r;
-        if (inWash) { if (S.wear) { S.wear = 0; S.wearK = 1; Sound.sfx('heal', 0.5, 1.6); } }
-        else if (p.grounded && p.pos.y < 0.15) { const m = wetAt(S, p.pos.x, p.pos.z); if (m) tint(S, m); }
-        p.speedMul = S.wear === 7 ? 0.8 : 1; if (matched(S, p.pos.x, p.pos.z)) S.match += dt; b.dmgTaken = DMG_BASE * (offSide(S, p.pos.x, p.pos.z) ? WRONG_SIDE : 1);
+        if (inWash) { if (w.wear) { w.wear = 0; w.wearK = 1; Sound.sfx('heal', 0.5, 1.6); } }
+        else if (p.grounded && p.pos.y < 0.15) { const m = wetAt(S, p.pos.x, p.pos.z); if (m) tint(S, p, m); }
+        p.speedMul = w.wear === 7 ? 0.8 : 1; if (matched(S, p)) w.match += dt; b.dmgTaken = DMG_BASE; w.mul = offSide(S, p.pos.x, p.pos.z) ? WRONG_SIDE : 1; // read by takenMul for this player's hits
       }
       if (S.split) { // the finale: the seam turns; he holds the pivot, facing the half he calls while he paints or judges, else you
         if (G.state === 'fight') S.lineA += S.lineW * dt;
-        if (b.alive && p) { const c = S.call, sg = c ? wantSide(c) : 1; b.facing = dampAng(b.facing, S.faceSide && c ? Math.atan2(sg * Math.cos(S.lineA), -sg * Math.sin(S.lineA)) : b.angToPlayer(), 6, dt); }
+        if (b.alive && G.players.length) { const c = S.call, sg = c ? wantSide(c) : 1; b.facing = dampAng(b.facing, S.faceSide && c ? Math.atan2(sg * Math.cos(S.lineA), -sg * Math.sin(S.lineA)) : b.angToPlayer(), 6, dt); }
       }
       S.dryT -= dt; if (S.dryT <= 0) { S.dryT = 0.5; for (const L of [S.strokes, S.baked]) for (const sh of L) if (!sh.dry && sh.m && G.ft - sh.t0 > WET) sh.dry = true; }
       // animation timers the view reads (no rule reads them)
-      S.swing = Math.max(0, S.swing - dt * 2.4); S.wearK = Math.max(0, S.wearK - dt * 2);
+      S.swing = Math.max(0, S.swing - dt * 2.4); for (const k in S.pw) S.pw[k].wearK = Math.max(0, S.pw[k].wearK - dt * 2);
       // channel 2: what the view half needs, as plain data
       const P = b.pub, q = S.roll;
-      P.lvl = S.lvl; P.neg = S.neg; P.col = S.col; P.wear = S.wear; P.wearK = S.wearK; P.wash = S.wash; P.down = S.down; P.crit = S.crit; P.flood = S.flood; P.swing = S.swing; P.look = S.lookT;
+      const p0 = G.players[0], w0 = p0 ? pw(S, p0) : { wear: 0, wearK: 0 };
+      P.pw = {}; for (const p of G.players) { const w = pw(S, p); P.pw[p.id] = { wear: w.wear, wearK: w.wearK, shell: !!S.nm && offSide(S, p.pos.x, p.pos.z) && S.down <= 0 }; }
+      P.need = need(S); P.lvl = S.lvl; P.neg = S.neg; P.col = S.col; P.wear = w0.wear; P.wearK = w0.wearK; P.wash = S.wash; P.down = S.down; P.crit = S.crit; P.flood = S.flood; P.swing = S.swing; P.look = S.lookT;
       P.roll = q ? { a: q.a, cx: q.cx, cz: q.cz, s: q.s, m: q.m } : null; P.strokes = S.strokes.length + S.baked.length;
-      if (S.nm) { P.split = S.split; P.lineA = S.lineA; P.call = S.call; P.seamOn = S.seamOn; P.seamP = S.seamP; P.seamW = S.seamW; P.varnR = S.varnR; P.top = S.top; P.sig = S.sig; P.step = S.finStep; P.shell = !!p && offSide(S, p.pos.x, p.pos.z) && S.down <= 0; }
+      if (S.nm) { P.split = S.split; P.lineA = S.lineA; P.call = S.call; P.seamOn = S.seamOn; P.seamP = S.seamP; P.seamW = S.seamW; P.varnR = S.varnR; P.top = S.top; P.sig = S.sig; P.step = S.finStep; P.shell = !!p0 && offSide(S, p0.pos.x, p0.pos.z) && S.down <= 0; }
     },
     danger(b, x, z) {
       const S = b.state, q = S.roll; if (!q) return Infinity; const dx = x - q.cx, dz = z - q.cz, al = dx * q.fx + dz * q.fz, sd = dx * q.fz - dz * q.fx;
@@ -438,7 +454,7 @@ import { Bot } from '../bot.js';
     // The autopilot hint. Two changes from Threshold so a bot fight replays without the bot: it asks for a jump (out.jump, which
     // Bot turns into an input) instead of calling p.jump(), and its scan memory lives in b.botMem instead of the boss state.
     bot(b, p) {
-      const S = b.state, M = b.botMem || (b.botMem = { scanT: 0, goal: null }), out = {}, nd = need(S), miss = nd & ~S.wear, extra = S.wear & ~nd, q = S.roll;
+      const S = b.state, M = p.botMem || (p.botMem = { scanT: 0, goal: null }), wr = pw(S, p).wear, out = {}, nd = need(S), miss = nd & ~wr, extra = wr & ~nd, q = S.roll;
       if (q) { const dx = p.pos.x - q.cx, dz = p.pos.z - q.cz, al = dx * q.fx + dz * q.fz, sd = dx * q.fz - dz * q.fx, tt = (al - q.s - 1) / q.v; if (Math.abs(sd) < 6.3 && tt > 0 && tt < 0.2) out.jump = true; }
       const bad = (x, z) => { const m = wetAt(S, x, z); return !!m && (m & ~nd) !== 0 && !(Math.hypot(x - S.wash.x, z - S.wash.z) < S.wash.r); };
       // hop over paint you must not touch

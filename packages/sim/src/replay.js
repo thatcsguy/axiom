@@ -3,7 +3,7 @@
 // (or the frame shape lost information). A recording from a real session is also a bug report anyone can re-run.
 import { G } from './core.js';
 import { View } from './view.js';
-import { startFight, tick, over, currentFight } from './fight.js';
+import { startFight, tickAll, over, currentFight } from './fight.js';
 import { stateHash } from './hash.js';
 
 // keep only what differs from an empty frame (JSON keeps doubles exact, so mx / mz replay bit for bit)
@@ -15,18 +15,20 @@ function pack(f) {
   return o;
 }
 
-// setup: startFight options (boss, cls, seed, nm, phase, intro, god, godMode, superDmg, tickHz) plus bot (1..3).
+// setup: startFight options (boss, cls or players, seed, nm, phase, intro, god, godMode, superDmg, tickHz) plus bot (1..3).
+// One player: each recorded frame is that player's frame. Several: each recorded frame is an array, one per player.
 // maxSec: fight-clock limit. Stops a little after the fight ends, so the end screen state is in the recording too.
 export function record(setup, maxSec = 600) {
   startFight(setup);
   const hz = currentFight().hz, frames = [], hashes = [];
   let tail = 10;
   for (let n = Math.round(maxSec * hz) + hz * 5; n > 0; n--) {
-    frames.push(pack(tick()));
+    const f = tickAll(); frames.push(f.length === 1 ? pack(f[0]) : f.map(pack));
     hashes.push(stateHash());
     if (over() && tail-- <= 0) break;
   }
-  return { v: 1, setup: Object.assign({}, setup, { bot: 0, tickHz: hz }), bot: setup.bot || 0, frames, hashes, end: { state: G.state, ft: G.ft, bossHp: G.boss.hp, errors: G.errors.slice() } };
+  const players = setup.players && setup.players.map((e) => Object.assign({}, e, { bot: 0 })); // the replay drives every player from the frames
+  return { v: 1, setup: Object.assign({}, setup, { bot: 0, tickHz: hz }, players ? { players } : {}), bot: setup.bot || 0, frames, hashes, end: { state: G.state, ft: G.ft, bossHp: G.boss.hp, errors: G.errors.slice() } };
 }
 
 // Feed a recording's frames back. Returns { ok, ticks, firstBad (tick index or -1), expected, got }.
@@ -36,7 +38,8 @@ export function replay(rec, o = {}) {
   try {
     startFight(Object.assign({}, rec.setup, { bot: 0 }));
     for (let i = 0; i < rec.frames.length; i++) {
-      tick(Object.assign({ mx: 0, mz: 0, held: 0, press: [] }, rec.frames[i]));
+      const fr = rec.frames[i], full = (q) => Object.assign({ mx: 0, mz: 0, held: 0, press: [] }, q);
+      tickAll(Array.isArray(fr) ? fr.map(full) : [full(fr)]);
       const h = stateHash();
       if (h !== rec.hashes[i]) return { ok: false, ticks: i + 1, firstBad: i, expected: rec.hashes[i], got: h, state: G.state, ft: G.ft };
     }

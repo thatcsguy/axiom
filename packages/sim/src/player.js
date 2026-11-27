@@ -6,7 +6,7 @@
 //   into a world vector before it sends them (plan: "the camera stays client-side").
 // - Target picking by screen position is gone: the client sends the target's entity id (see fight.js applyInput).
 // - The model is a stand-in: swings become 'hero.swing' cues and hand() is an estimate (it only feeds cue positions).
-import { G } from './core.js';
+import { G, asActor } from './core.js';
 import { V3, clamp, dampAng, angTo } from './math.js';
 import { FX, Sound, UI, View } from './view.js';
 
@@ -90,7 +90,7 @@ export class Player {
     if (G.cineLock && !o.pierce) return 0; // nothing lands on a hero who cannot move; pierce: a nightmare 'out of time' blow
     if (this.invuln > 0 && o.src !== 'fall' && !o.pierce) return 0;
     if (o.blockable && this.dodgeT > 0) { if (this.cls.onDodge) this.cls.onDodge(this, o); return 0; } // roll i-frames never beat an unblockable
-    if (o.blockable && this.parryT > 0) { this.parryT = 0; this.cls.onParry(this, o); return 0; }
+    if (o.blockable && this.parryT > 0) { this.parryT = 0; asActor(this, () => this.cls.onParry(this, o)); return 0; } // the riposte is this player's damage
     amt = Math.round(amt * this.dmgTakenMul);
     if (o.kb && o.kb.dist) { const d = 0.38; this.kb = { vx: Math.sin(o.kb.dir) * o.kb.dist / d, vz: Math.cos(o.kb.dir) * o.kb.dist / d, t: d }; this.casting = null; }
     if (o.blockable && this.shield > 0) { const a = Math.min(this.shield, amt); this.shield -= a; amt -= a; if (this.cls.onAbsorb) this.cls.onAbsorb(this, a); FX.num(this.aim(), 'ABSORB', 'note'); Sound.sfx('shield', 0.8); if (amt <= 0) return 0; }

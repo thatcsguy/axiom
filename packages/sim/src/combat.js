@@ -2,8 +2,9 @@
 // Carried over from Threshold's 06_combat.js with every mesh, shader and instanced draw removed. What the picture needs
 // comes from snapshots (hazard and bullet lists, entity state) and from cues (view.js).
 //
-// Still single-player: hazards, bullets, homing and the enrage read G.player. Plan step 3 replaces that with a player list.
-import { G, Co, Hooks, vrand } from './core.js';
+// Every hazard and bullet checks every standing player (docs/plan.md, "Hits"); damage dealt is credited to G.actor, the
+// player whose skill is running. With one player everything behaves exactly as it did single-player.
+import { G, Co, Hooks, vrand, nearestPlayer } from './core.js';
 import { V3, TAU, clamp, smooth, angDiff, dampAng, angTo } from './math.js';
 import { FX, Sound, Music, Hitch } from './view.js';
 
@@ -31,19 +32,22 @@ export const Hz = (() => {
   }
   function release(h) { h.state = 'done'; }
   function fire(h) {
-    const p = G.player, s = h.shape;
+    const s = h.shape;
     h.state = 'fired'; h.fireT = 0.28;
     if (h.onFire) h.onFire(h);
     else if (!h.quiet) {
       if (s.type === 'circle') { FX.burst(s.x, 0.3, s.z, { n: 10 + s.r * 4, color: h.color, speed: [2, 7 + s.r], life: [0.3, 0.8], size: [0.2, 0.5], radius: s.r * 0.7, up: 3 }); FX.light(s.x, 2, s.z, h.color, 30 + s.r * 8, 0.35, 10 + s.r * 3); }
       Sound.sfx(h.sfx || 'boom', Math.min(1, 0.35 + (h.dmg || 100) / 600)); FX.shake(Math.min(0.5, (h.dmg || 100) / 900));
     }
-    if (p && p.alive && h.dmg !== 0 && inShape(s, p.pos.x, p.pos.z) !== !!h.invert) {
-      let kb = null;
+    let any = false;
+    if (h.dmg !== 0) for (const p of G.players) {
+      if (!p.alive || inShape(s, p.pos.x, p.pos.z) === !!h.invert) continue;
+      any = true; let kb = null;
       if (h.kb) { const a = h.kb.dir !== undefined ? h.kb.dir : angTo(h.kb.x === undefined ? s.x : h.kb.x, h.kb.z === undefined ? s.z : h.kb.z, p.pos.x, p.pos.z); kb = { dir: a, dist: h.kb.dist }; }
       const taken = p.hurt(h.dmg, { blockable: h.blockable, kb, src: h });
-      if (h.onHit) h.onHit(h, taken);
-    } else if (h.onMiss) h.onMiss(h);
+      if (h.onHit) h.onHit(h, taken, p); // the third argument is the player hit (several can be)
+    }
+    if (!any && h.onMiss) h.onMiss(h);
   }
   function update(dt) {
     for (let i = list.length - 1; i >= 0; i--) {
@@ -52,15 +56,15 @@ export const Hz = (() => {
       h.t += dt;
       if (h.state === 'tele') {
         if (h.track && h.delay - h.t > (h.lock === undefined ? 0.5 : h.lock)) h.track(h.shape, h);
-        if (h.t >= h.delay) { if (h.dur > 0) { h.state = 'zone'; h.zt = 0; h.tickT = 0; if (h.onFire) h.onFire(h); } else fire(h); }
+        if (h.t >= h.delay) { if (h.dur > 0) { h.state = 'zone'; h.zt = 0; h.tickT = {}; if (h.onFire) h.onFire(h); } else fire(h); }
       } else if (h.state === 'fired') {
         h.fireT -= dt; if (h.track && h.trackFired) h.track(h.shape, h); // trackFired: the flash keeps following a moving floor
         if (h.fireT <= 0) { release(h); list.splice(i, 1); }
       } else if (h.state === 'zone') {
-        h.zt += dt; h.tickT -= dt;
+        h.zt += dt;
         if (h.track) h.track(h.shape, h);
-        const p = G.player;
-        if (h.tickT <= 0 && p && p.alive && h.dmg && inShape(h.shape, p.pos.x, p.pos.z)) { h.tickT = h.every || 0.5; p.hurt(h.dmg, { blockable: false, src: h, dot: true }); if (h.onHit) h.onHit(h); }
+        for (const k in h.tickT) h.tickT[k] -= dt; // one tick timer per player (keyed by player id)
+        for (const p of G.players) if ((h.tickT[p.id] || 0) <= 0 && p.alive && h.dmg && inShape(h.shape, p.pos.x, p.pos.z)) { h.tickT[p.id] = h.every || 0.5; p.hurt(h.dmg, { blockable: false, src: h, dot: true }); if (h.onHit) h.onHit(h, undefined, p); }
         if (h.zt >= h.dur) { release(h); list.splice(i, 1); }
       }
     }
@@ -94,16 +98,16 @@ export const Bul = (() => {
   function fire(o) { if (list.length >= MAX) return null; const b = Object.assign({ id: ++ids.bul, y: 1.1, r: 0.38, dmg: 90, color: (G.boss && G.boss.def.telegraph) || 0xff5a2a, life: 8, speed: 8, dir: 0, t: 0, accel: 0, turn: 0, curve: 0, tag: 'phase' }, o); list.push(b); return b; }
   function ringOf(x, z, n, speed, o = {}, offset = 0, gapAt, gapArc) { for (let i = 0; i < n; i++) { const a = offset + i / n * TAU; if (gapAt !== undefined && Math.abs(angDiff(a, gapAt)) < gapArc / 2) continue; fire(Object.assign({ x, z, dir: a, speed }, o)); } }
   function update(dt) {
-    const p = G.player;
     for (let i = list.length - 1; i >= 0; i--) {
       const b = list[i]; b.t += dt;
+      const p = b.turn ? (b.homeOn && b.homeOn.alive ? b.homeOn : nearestPlayer(b.x, b.z)) : null; // homing: its own mark (b.homeOn), else the nearest player
       if (b.turn && p) b.dir = b.dir + clamp(angDiff(b.dir, angTo(b.x, b.z, p.pos.x, p.pos.z)), -b.turn * dt, b.turn * dt);
       if (b.curve) b.dir += b.curve * dt;
       if (b.accel) b.speed = Math.max(0, b.speed + b.accel * dt);
       if (b.onUpdate) b.onUpdate(b, dt);
       b.x += Math.sin(b.dir) * b.speed * dt; b.z += Math.cos(b.dir) * b.speed * dt;
       let dead = b.t >= b.life || b.dead;
-      if (!dead && p && p.alive && b.t > 0.08) { const d = Math.hypot(p.pos.x - b.x, p.pos.z - b.z); if (d < b.r + 0.4 && p.pos.y < b.y + 1.2) { p.hurt(b.dmg, { blockable: true, src: b }); FX.impact(b.x, b.y, b.z, b.color, 0.6); dead = true; } }
+      if (!dead && b.t > 0.08) for (const q of G.players) { if (!q.alive) continue; const d = Math.hypot(q.pos.x - b.x, q.pos.z - b.z); if (d < b.r + 0.4 && q.pos.y < b.y + 1.2) { q.hurt(b.dmg, { blockable: true, src: b }); FX.impact(b.x, b.y, b.z, b.color, 0.6); dead = true; break; } }
       if (!dead && G.arena && G.arena.bulletBounds && !G.arena.bulletBounds(b.x, b.z)) dead = true;
       if (dead) { list[i] = list[list.length - 1]; list.pop(); }
     }
@@ -127,6 +131,7 @@ export class Ent {
     this.onDamaged = o.onDamaged || null; this.onDeath = o.onDeath || null; this.updateFn = o.update || null; this.meleeY = o.meleeY || 0;
   }
   aim(out) { return out.set(this.pos.x, this.pos.y + this.aimY, this.pos.z); }
+  facePlayer() { return nearestPlayer(this.pos.x, this.pos.z); } // who an auto-facing body turns to (a boss: its focus)
   distTo(x, z) { return Math.max(0, Math.hypot(x - this.pos.x, z - this.pos.z) - this.radius); }
   // hpOwner: a second body that shares another entity's health (hits land on the owner; dmgTaken, exposed and onDamaged stay
   // with the body that was hit). onImmuneHit(info, ent): called when an immune body is hit; returning true hides "IMMUNE".
@@ -134,10 +139,11 @@ export class Ent {
     const tgt = this.hpOwner || this;
     if (!this.alive || !tgt.alive) return 0;
     if (this.immune) { if (this.onImmuneHit && this.onImmuneHit(info, this)) return 0; if (!G.headless && info.show !== false) FX.num(this.aim(_tv), 'IMMUNE', 'note'); return 0; }
-    amt *= this.dmgTaken * (this.exposed > 0 ? 1.12 : 1) * (G.player ? G.player.dmgMul : 1);
+    const by = G.actor || G.players[0] || null; // who dealt it (the acting player; outside any player's turn, the first player, as single-player did)
+    amt *= (this.def && this.def.takenMul ? this.dmgTaken * this.def.takenMul(this, by) : this.dmgTaken) * (this.exposed > 0 ? 1.12 : 1) * (by ? by.dmgMul : 1);
     amt = Math.round(amt); tgt.hp -= amt;
-    if (G.player) G.player.stats.dmg += amt;
-    if (this.onDamaged) this.onDamaged(amt, info, this);
+    if (by) by.stats.dmg += amt;
+    if (this.onDamaged) this.onDamaged(amt, info, this, by);
     if (!G.headless) { this.aim(_tv); _tv.x += (vrand() - 0.5) * this.radius; _tv.y += vrand() * 0.8; FX.num(_tv, String(amt), info.crit ? 'crit' : ''); }
     if (amt > 0 && tgt.isBoss && info.src === 'player' && G.opts.superDmg) tgt.superPush();
     if (tgt.hp <= 0) { tgt.hp = 0; tgt.die(); }
@@ -160,23 +166,40 @@ export class Ent {
   }
   update(dt) {
     if (this.exposed > 0) this.exposed -= dt; if (this.stagger > 0) this.stagger -= dt;
-    const p = G.player;
+    const p = this.autoFace ? this.facePlayer() : null;
     if (this.autoFace && p && this.stagger <= 0) this.facing = dampAng(this.facing, angTo(this.pos.x, this.pos.z, p.pos.x, p.pos.z), this.turnRate, dt);
     if (this.updateFn) this.updateFn(this, dt);
   }
 }
 const _tv = new V3();
+const teamDmg = () => { let s = 0; for (const p of G.players) s += p.stats.dmg; return s; };
 
 export class Boss extends Ent {
   constructor(def) {
     super({ name: def.name, hp: def.hp, radius: def.radius || 2, aimY: def.aimY || 2.5 });
     this.def = def; this.isBoss = true; this.phase = -1; this.nextPhase = 0; this.transitioning = false; this.enraged = false; this.state = {};
     this.pub = {}; // plain data the view half reads (channel 2 of docs/plan.md): fill it from the boss's rules, never read it back
-    this.P = null; // the player, set at fight start
+    this.P = null; // the first player, set at fight start (kept for carried-over code; use focusPlayer() / nextTarget())
+    this.focusId = 0; this.rr = 0; // the player the boss is aiming at, and the round-robin cursor for nextTarget()
   }
   face(x, z) { this.facing = angTo(this.pos.x, this.pos.z, x, z); }
-  angToPlayer() { const p = G.player; return angTo(this.pos.x, this.pos.z, p.pos.x, p.pos.z); }
-  distToPlayer() { const p = G.player; return Math.hypot(p.pos.x - this.pos.x, p.pos.z - this.pos.z); }
+  // Who the boss is dealing with: its focus (the last nextTarget() pick) while that player stands, else the first standing player.
+  // This takes the place of Threshold's G.player in boss files: no aggro table, the script chooses (docs/plan.md).
+  focusPlayer() {
+    const L = G.players; let p = L.find((q) => q.id === this.focusId);
+    if (!p || !p.alive) p = L.find((q) => q.alive) || L[0] || null;
+    return p;
+  }
+  facePlayer() { return this.focusPlayer(); }
+  // The next standing player in turn (round robin over join order), which also becomes the focus. Uses no randomness, so with
+  // one player it always returns that player and a solo fight runs exactly as before.
+  nextTarget() {
+    const L = G.players, n = L.length; if (!n) return null;
+    for (let k = 0; k < n; k++) { const p = L[(this.rr + k) % n]; if (p.alive) { this.rr = (this.rr + k + 1) % n; this.focusId = p.id; return p; } }
+    return L[0];
+  }
+  angToPlayer() { const p = this.focusPlayer(); return angTo(this.pos.x, this.pos.z, p.pos.x, p.pos.z); }
+  distToPlayer() { const p = this.focusPlayer(); return Math.hypot(p.pos.x - this.pos.x, p.pos.z - this.pos.z); }
   *turnTo(a, dur = 0.4) { const a0 = this.facing, d = angDiff(a0, a); let t = 0; while (t < dur) { t += G.dt; this.facing = a0 + d * smooth(t / dur); yield; } }
   *moveTo(x, z, speed = 8, o = {}) {
     while (this.alive) { const dx = x - this.pos.x, dz = z - this.pos.z, d = Math.hypot(dx, dz); if (d < 0.05) break; const s = Math.min(d, speed * G.dt); this.pos.x += dx / d * s; this.pos.z += dz / d * s; if (o.face !== false) this.facing = dampAng(this.facing, Math.atan2(dx, dz), 12, G.dt); yield; }
@@ -194,7 +217,7 @@ export class Boss extends Ent {
     const b = this, ph = this.def.phases[i];
     this.logPhase();
     Hitch.mark('phase ' + (i + 1));
-    this.phaseT = 0; this.liveT = 0; this.phaseDmg0 = G.player ? G.player.stats.dmg : 0;
+    this.phaseT = 0; this.liveT = 0; this.phaseDmg0 = teamDmg();
     Co.stopTag('phase'); Hz.clear('phase'); Bul.clear('phase'); this.castState = null; this.phase = i; this.nextPhase = i + 1; this.transitioning = true;
     Co.start(function* () {
       if (ph.enter) { b.immune = true; yield* ph.enter(b); b.immune = false; }
@@ -216,7 +239,7 @@ export class Boss extends Ent {
   // ---- the nightmare split log: how long each phase was live and the damage dealt in it
   logPhase() {
     if (!this.def.nm || this.phase < 0) return; const L = this.phaseLog || (this.phaseLog = []); if (L[this.phase]) return;
-    L[this.phase] = { time: Math.round((this.phaseT || 0) * 10) / 10, dmg: Math.round((G.player ? G.player.stats.dmg : 0) - (this.phaseDmg0 || 0)) };
+    L[this.phase] = { time: Math.round((this.phaseT || 0) * 10) / 10, dmg: Math.round(teamDmg() - (this.phaseDmg0 || 0)) };
   }
   // the last blow (def.lastBlow, a coroutine): lastBlowAt seconds after the enrage, the phase stops and the blow plays out.
   startLastBlow() {
@@ -234,7 +257,7 @@ export class Boss extends Ent {
     if (d.enrage && G.ft > d.enrage && !G.rehearsing) {
       if (!this.enraged) { this.enraged = true; this.enrageT = 0; FX.flash(0xff2010, 0.5, 1.5); Sound.sfx('roar'); }
       const base = d.enrageBase !== undefined ? d.enrageBase : 120, grow = d.enrageGrow !== undefined ? d.enrageGrow : 14;
-      this.enrageT -= dt; if (this.enrageT <= 0) { this.enrageT = 2; const p = G.player; if (p && p.alive) { p.hurt(base + (G.ft - d.enrage) * grow, { blockable: false, src: 'enrage' }); FX.flash(0xff2010, 0.3, 3); FX.ring(this.pos.x, this.pos.z, { r1: 40, color: 0xff3010, dur: 0.8 }); } }
+      this.enrageT -= dt; if (this.enrageT <= 0) { this.enrageT = 2; let any = false; for (const p of G.players) if (p.alive) { any = true; p.hurt(base + (G.ft - d.enrage) * grow, { blockable: false, src: 'enrage' }); } if (any) { FX.flash(0xff2010, 0.3, 3); FX.ring(this.pos.x, this.pos.z, { r1: 40, color: 0xff3010, dur: 0.8 }); } }
       if (d.lastBlow && !this.lastBlowing && G.ft >= d.enrage + (d.lastBlowAt !== undefined ? d.lastBlowAt : 24)) this.startLastBlow();
     }
   }

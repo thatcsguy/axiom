@@ -13,7 +13,10 @@ export const G = {
   timeScale: 1,    // boss-driven slow motion: the fight driver multiplies the tick by it (hit-stop is client-only)
   bosses: [],      // registered boss definitions
   classes: [],     // registered class definitions
-  player: null, boss: null, arena: null,
+  players: [],     // everyone in the fight, in join order (1 to 4; the training dummy takes more)
+  player: null,    // players[0]: kept for solo-era tools and the debug viewer. Rules never read it (they take a player, or loop over players).
+  actor: null,     // the player whose input, skill or update is running right now: damage dealt is credited to them
+  boss: null, arena: null,
   ents: [],        // hostile entities (boss + adds)
   errors: [],
   nightmare: false,
@@ -34,6 +37,17 @@ export const pick = (arr) => arr[Math.floor(G.rng() * arr.length)];
 export const shuffle = (arr) => { const a = arr.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(G.rng() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
 export const vrand = Math.random; // cosmetic-only randomness (never affects the sim; only feeds cue arguments)
 export const NM = (normal, nightmare) => G.nightmare ? nightmare : normal; // pick a number by difficulty
+
+// players still standing, in join order
+export const livePlayers = () => G.players.filter((p) => p.alive);
+// the nearest standing player to (x, z), or players[0] when nobody stands (callers only aim; nothing is hurt through it)
+export function nearestPlayer(x, z) {
+  let best = null, bd = Infinity;
+  for (const p of G.players) { if (!p.alive) continue; const d = Math.hypot(p.pos.x - x, p.pos.z - z); if (d < bd) { bd = d; best = p; } }
+  return best || G.players[0] || null;
+}
+// run fn with p as the acting player (damage it deals is credited to p)
+export function asActor(p, fn) { const prev = G.actor; G.actor = p; try { return fn(); } finally { G.actor = prev; } }
 
 export function reportError(e) {
   const msg = (e && e.stack) ? e.stack.split('\n').slice(0, 3).join(' | ') : String(e);

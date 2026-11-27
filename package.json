@@ -11,11 +11,12 @@
     "node": ">=20"
   },
   "scripts": {
+    "start": "node packages/server/src/index.js",
     "test": "node --test \"test/**/*.test.js\"",
-    "replay": "node tools/replay.js",
+    "bots": "node tools/bots.js",
     "sim": "node tools/sim.js",
-    "server": "node packages/server/src/index.js",
-    "dev": "node tools/serve.js",
-    "build": "node tools/build-client.js"
+    "replay": "node tools/replay.js",
+    "build": "node tools/build-client.js",
+    "heroes": "node tools/import-heroes.js"
   }
 }

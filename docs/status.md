@@ -1,6 +1,8 @@
 # Status
 
-Last updated 2026-11-27. Plan step 1 (headless core, solo) is done for Pentimento; step 2 has a debug viewer.
+Last updated 2026-11-27. A playable multiplayer prototype: a Node server, a Three.js browser client, rooms with a lobby,
+1 to 4 players, Duskblade and Stormcaller, the Training Dummy and Pentimento. Plan steps 1 to 3 are done; step 4
+(prediction) is not started.
 
 ## What is ported
 
@@ -18,7 +20,8 @@ From Threshold (`fun-stuff/threshold/src`, as of PR #87):
 | `38_boss_atelier.js` | `sim/src/bosses/atelier.js` | Pentimento's rules: Normal and Nightmare "Chiaroscuro", every mechanic, the paint grid, the bot hints. Meshes, shaders and the paint texture are gone; strokes leave as `atelier.lay` cues. |
 
 New in Axiom: `hash.js` (per-tick state hash), `snapshot.js` (plain-data picture for viewers), `replay.js`
-(record and replay), `protocol` (frame sanitizer), `server/room.js` (one fight on a real-time loop with an input buffer).
+(record and replay), `protocol` (messages and frame sanitizer), `bosses/dummy.js` (the Training Dummy), the server and the
+client described below.
 
 ## How it was checked
 
@@ -31,13 +34,46 @@ New in Axiom: `hash.js` (per-tick state hash), `snapshot.js` (plain-data picture
   at 138 s and Hexslinger at 22 s. Both splits trace to one `Math.cos` result differing in its last bit between Chromium's
   and Node's V8, which tips a near-tie in the bot's choice of where to stand. The rules carried over unchanged.
 
+## Several players
+
+- The sim keeps `G.players` (1 to 4; `G.player` is still `players[0]` for old tools). Damage is credited to `G.actor`.
+  Bosses pick targets with `focusPlayer()` (the one he is facing) and `nextTarget()` (round robin, no RNG, so a solo fight
+  is bit-identical to before: checked on per-second traces for all four classes, Normal and Nightmare, 240 s).
+- Boss health scales `0.9 x players` from two players up (`hpScale` in `fight.js`); the dummy does not scale.
+- A player at 0 health is down and the fight goes on; it is a wipe only when everyone is down.
+- **Pentimento for a party:** each player wears their own paint (`pub.pw[id]`); strokes, splats and drips aim at
+  players in turn; a Critique knocks him down only if every living player matches, and everyone who does not match takes
+  the hit; the repair route is checked per player. Bot parties kill him: 2 players in about 3:20 to 4:00, 4 in 3:50 to 5:10.
+- **Training Dummy** (`bosses/dummy.js`): a million health that refills, never attacks, keeps a per-player damage meter
+  (DPS over the current burst, which ends 6 s after your last hit). Players can walk in and out and change class mid-fight.
+
+## The server and client
+
+- `npm start` runs one Node process: static files, `/healthz`, and a dependency-free WebSocket at `/ws`.
+- **Rooms** (`?room=`, default `main`): a lobby of members (people, plus server bots from *Add a bot*). Starting
+  Pentimento loads every member into the fight and locks the room; newcomers watch until it ends. The dummy stays open:
+  newcomers walk in. A player who leaves a boss fight is taken over by the autopilot. Each running fight has its own
+  worker thread.
+- **Protocol** (`protocol/src/index.js`): JSON. Clients send input frames at 30 Hz (move, facing, held buttons, presses,
+  target); the server sends a snapshot per tick (about 4.5 KB, about 130 KB/s per player on Pentimento) with that
+  tick's cues. Loopback round trip under 1 ms, snapshot spacing p99 37 ms.
+- **Client**: draws 100 ms in the past (your own character 50 ms), blending the two snapshots around that moment, and
+  fires cues when the drawing reaches their tick. Threshold's hero models and animation code are imported unchanged
+  (`tools/import-heroes.js`). Pentimento's arena, paint canvas, dish, half-disc and roller are simple stand-ins drawn
+  from cues and `pub`; the boss is a jointed lay figure, not Threshold's model.
+- **Tests**: `test/server.test.js` runs the real server and real sockets: lobby, the dummy flow, four autopilots killing
+  Pentimento with a spectator joining late, and "brain" fake clients that play from snapshots only. The client was
+  checked in Chromium (Playwright, two players, dummy then Pentimento).
+
 ## The boundary (what is not done)
 
-- **One player.** `G.player` is still used throughout the sim, classes and boss. Plan step 3 replaces it with a list.
-- **No network.** `server/room.js` takes frames through a method call. No WebSocket, no MessagePack yet.
-- **No Three.js client.** `packages/client` is a 2D debug viewer, not Threshold's look. The view half of Pentimento
-  (paint texture, roller mesh, Nightmare negative post-effect, intro shot framing) is not written.
+- **No client prediction.** Your own character moves when the server says so: fine on a LAN, sluggish over 100 ms+.
+  Prediction needs the same trig on client and server (see below) and is plan step 4.
+- **Only Duskblade and Stormcaller** are offered in the lobby. Ashwarden and Hexslinger are still in the sim.
+- **Pentimento's look** is a stand-in: no Nightmare negative post-effect, no intro framing, no sound or music.
+- **JSON snapshots, full every tick.** Deltas or a binary format would cut bandwidth about tenfold when it matters.
 - **One fight.** The other 18 bosses are not ported. `docs/porting.md` says how.
+- **No accounts, no records, no reconnect.** A dropped player rejoins as a newcomer (and watches a locked fight).
 - **Float determinism across engines is not guaranteed.** The same JavaScript engine gives the same fight every time,
   but Chromium and Node (or two V8 versions) can disagree in the last bit of `Math.sin` / `Math.cos`. A server-only
   authority does not care; client prediction (step 4) and replays across versions will. The fix, if needed, is a small
@@ -52,6 +88,7 @@ Nightmare retune (PR #77).
 
 ## Next
 
-1. The Three.js view half of Pentimento in the Worker client, drawing only from snapshot, `pub` and cues (plan step 2).
-2. A player list in place of `G.player`, then WebSocket rooms with bots as fake clients (plan step 3).
-3. Decide on deterministic trig before client prediction (plan step 4).
+1. Play it with real people over the internet (Fly.io or Render) and collect what feels wrong: input delay, camera,
+   readability of Pentimento's paint at a distance.
+2. Client prediction for your own movement and instant skills (plan step 4), with deterministic trig first.
+3. Pentimento's look and sound from Threshold, then mechanic tweaks for parties.

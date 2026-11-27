@@ -1,13 +1,33 @@
-// The messages between an Axiom client and the server. JSON for now; the plan's MessagePack is a drop-in change to
-// encode/decode once the shapes settle. Nothing here is wired to a socket yet (plan step 3).
+// The messages between an Axiom client and the server, as JSON over one WebSocket (the plan's MessagePack is a drop-in
+// change to encode / decode once the shapes settle).
 //
-// Client -> server, once per tick:   { t: 'input', tick, f: <input frame> }
-// Server -> client:                  { t: 'welcome', v, room, you, tickHz, setup }
-//                                     { t: 'snap', tick, s: <snapshot from @axiom/sim snapshot()> }
-//                                     { t: 'cues', tick, c: [[name, args], ...] }
-//                                     { t: 'end', state, ft }
-export const PROTOCOL_VERSION = 1;
-export const MSG = { HELLO: 'hello', WELCOME: 'welcome', INPUT: 'input', SNAP: 'snap', CUES: 'cues', END: 'end' };
+// Client -> server
+//   { t: 'hello', v, name }                 first message; the server answers 'welcome' and then 'lobby'
+//   { t: 'class', cls }                     pick a class (in the lobby; on the training dummy it swaps on the spot)
+//   { t: 'start', boss, nm }                pick an encounter: everyone in the lobby loads in. A boss locks the room until it ends;
+//                                           the training dummy does not (people can walk in, change class, walk out)
+//   { t: 'end' }                            end the encounter for everyone (back to the lobby)
+//   { t: 'input', f: <input frame> }        sent every tick while playing; presses and jumps are kept until the next sim tick
+//   { t: 'auto', on }                       hand your character to the autopilot (or take it back)
+//   { t: 'addBot', cls } / { t: 'dropBot', id }   lobby: fill a seat with a server-side bot
+//   { t: 'ping', c }                        answered with { t: 'pong', c }
+// Server -> client
+//   { t: 'welcome', v, id, room, tickHz, classes, bosses }
+//   { t: 'lobby', room, phase: 'lobby' | 'fight', enc, members: [{ id, name, cls, bot, inFight, sim }] }
+//   { t: 'start', enc, you, tickHz }        the encounter is loading; `you` is your character's id in snapshots (null: watching)
+//   { t: 'joined', you }                    you walked into a running training dummy, or changed class there
+//   { t: 'snap', s: <snapshot>, c: [[cue, args], ...] }   once per tick: the whole picture, and the cues of that tick
+//   { t: 'end', result: 'win' | 'dead' | 'ended', ft, stats }
+//   { t: 'note', text }                     something the player should read (a refused request, a locked room)
+export const PROTOCOL_VERSION = 2;
+export const MSG = { HELLO: 'hello', WELCOME: 'welcome', LOBBY: 'lobby', START: 'start', JOINED: 'joined', INPUT: 'input', SNAP: 'snap', END: 'end', NOTE: 'note' };
+
+// The MVP's roster: Threshold's first two classes and two encounters. The sim keeps all four classes; the lobby offers these.
+export const LOBBY_CLASSES = ['duskblade', 'stormcaller'];
+export const ENCOUNTERS = ['dummy', 'atelier'];
+export const MAX_PARTY = 4;   // a boss fight; the training dummy takes up to 8
+export const MAX_NAME = 16;
+export const cleanName = (n) => String(n || '').replace(/[^\p{L}\p{N} _.'-]/gu, '').trim().slice(0, MAX_NAME);
 
 export const SLOTS = 7;      // hotbar slots 0-6
 export const MAX_PRESSES = 4; // per tick; more is a broken or hostile client

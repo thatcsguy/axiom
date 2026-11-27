@@ -4,7 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Axiom</title>
-<script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js" } }</script>
+<script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/" } }</script>
+<link rel="stylesheet" href="src/hud.css">
 <style>
   :root { --bg: #0e0f13; --panel: rgba(18, 19, 25, 0.88); --line: rgba(255, 255, 255, 0.12); --fg: #ece8df; --dim: #9a978f; --gold: #f0c060; --red: #e2513e; --green: #5ac878; }
   * { box-sizing: border-box; }
@@ -35,38 +36,21 @@
   .enc { --c: var(--gold); }
   .endcard { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; } .endcard h2 { margin: 0; } .endcard.win h2 { color: var(--green); } .endcard.dead h2 { color: var(--red); }
   .endcard table { border-collapse: collapse; margin-top: 8px; width: 100%; max-width: 560px; } .endcard td, .endcard th { text-align: left; padding: 3px 10px 3px 0; font-variant-numeric: tabular-nums; } .endcard th { color: var(--dim); font-weight: 500; font-size: 12px; }
-  /* hud */
-  #hud { position: fixed; inset: 0; pointer-events: none; z-index: 2; }
-  .barbox { position: relative; height: 16px; background: rgba(0, 0, 0, 0.55); border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
-  .barbox i { position: absolute; inset: 0 auto 0 0; background: linear-gradient(#e2513e, #a82a1e); }
-  .barbox span { position: relative; display: block; text-align: center; font-size: 11px; line-height: 15px; font-variant-numeric: tabular-nums; text-shadow: 0 1px 2px #000; }
-  #boss { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); width: min(560px, calc(100vw - 32px)); text-align: center; }
-  #bossName { font-weight: 700; letter-spacing: 0.18em; font-size: 15px; text-shadow: 0 1px 3px #000; } #bossInfo { font-size: 12px; color: var(--dim); margin-top: 3px; text-shadow: 0 1px 2px #000; }
-  #bossCast { margin: 4px auto 0; width: 70%; height: 13px; } #bossCast i { background: linear-gradient(#f0c060, #b0802a); } #bossCast span { line-height: 12px; }
-  #party { position: absolute; left: 16px; top: 90px; display: grid; gap: 6px; width: 190px; }
-  .pf { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; position: relative; } .pf.me { border-color: rgba(240, 192, 96, 0.5); }
-  .pf .pn { font-size: 12px; font-weight: 600; } .pf .hp { position: relative; height: 8px; background: rgba(0, 0, 0, 0.5); border-radius: 3px; overflow: hidden; margin-top: 2px; }
-  .pf .hp i { position: absolute; inset: 0 auto 0 0; background: var(--green); } .pf .hp .sh { position: absolute; right: 0; top: 0; bottom: 0; background: rgba(150, 220, 255, 0.7); }
+  /* hud: Threshold's frames, bars, pips, hotbar and numbers come from src/hud.css; Axiom's additions and overrides follow */
+  #hud { z-index: 2; opacity: 1; } #hurtv { z-index: 1; }
+  #bossInfo { font-size: 12px; color: #ddd; margin-top: 5px; text-align: center; letter-spacing: 0.08em; text-shadow: 0 1px 3px #000; }
+  #party { position: absolute; left: 16px; top: 96px; display: grid; gap: 6px; width: 190px; }
+  .pf { background: rgba(10, 11, 18, 0.72); border: 1px solid rgba(255, 255, 255, 0.14); padding: 4px 6px; position: relative; } .pf.me { border-color: rgba(232, 199, 122, 0.5); }
+  .pf .pn { font-size: 12px; font-weight: 600; letter-spacing: 0.04em; } .pf .hp { position: relative; height: 8px; background: rgba(0, 0, 0, 0.62); border: 1px solid rgba(255, 255, 255, 0.2); overflow: hidden; margin-top: 3px; }
+  .pf .hp i { position: absolute; inset: 0 auto 0 0; background: linear-gradient(180deg, #58d27a, #1f8a45); } .pf .hp .sh { position: absolute; right: 0; top: 0; bottom: 0; background: rgba(160, 220, 255, 0.55); }
   .pf.down { opacity: 0.45; } .pf.down .hp i { background: #555; }
   .sw { display: inline-block; width: 12px; height: 12px; border-radius: 50%; border: 1px solid rgba(255, 255, 255, 0.6); vertical-align: -2px; } .pf .sw { position: absolute; right: 6px; top: 4px; }
-  #meter { position: absolute; right: 16px; top: 90px; width: 250px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-variant-numeric: tabular-nums; }
-  #meter h4 { margin: 0 0 4px; font-size: 12px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.1em; } #meter div { display: flex; gap: 6px; align-items: baseline; } #meter div span:first-child { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } #meter b { font-size: 16px; }
-  #mine { position: absolute; left: 50%; bottom: 92px; transform: translateX(-50%); width: min(420px, calc(100vw - 32px)); display: grid; gap: 4px; }
-  #myHp i { background: linear-gradient(#5ac878, #2f8a4a); } #myCast { height: 12px; } #myCast i { background: linear-gradient(#8fd8ff, #3a8ac0); } #myCast span { line-height: 11px; }
-  #myRes { font-size: 12px; text-align: center; text-shadow: 0 1px 2px #000; } .pip { display: inline-block; width: 16px; height: 9px; margin: 0 2px; border-radius: 3px; border: 1px solid var(--c); vertical-align: middle; } .pip.on { background: var(--c); } .pip.gl { box-shadow: 0 0 6px 2px #ffd860; }
-  .rbar { display: inline-block; width: 160px; height: 8px; position: relative; background: rgba(0, 0, 0, 0.5); border-radius: 3px; overflow: hidden; vertical-align: middle; } .rbar i { position: absolute; inset: 0 auto 0 0; background: #ff9a4a; }
-  #wear { text-align: center; font-size: 12px; text-shadow: 0 1px 2px #000; }
-  #hint { position: absolute; left: 50%; bottom: 200px; transform: translateX(-50%); color: var(--gold); font-weight: 600; text-shadow: 0 1px 3px #000; }
-  #hotbar { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); display: flex; gap: 6px; }
-  .slot { position: relative; width: 66px; height: 66px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; padding: 4px 3px; }
-  .slot kbd { position: absolute; left: 3px; top: 3px; } .slot .nm { font-size: 10.5px; line-height: 1.1; text-align: center; } .slot .cd { position: absolute; top: 18px; font-size: 18px; font-weight: 700; text-shadow: 0 1px 3px #000; z-index: 2; } .slot .ct { position: absolute; right: 4px; top: 2px; font-size: 11px; color: var(--gold); }
-  .slot .sweep { position: absolute; left: 0; right: 0; bottom: 0; background: rgba(0, 0, 0, 0.6); } .slot.off { opacity: 0.45; } .slot.cast { border-color: #8fd8ff; } .slot.hit { animation: hit 0.25s; }
-  @keyframes hit { 0% { background: rgba(255, 255, 255, 0.35); } 100% { background: var(--panel); } }
+  #meter { position: absolute; right: 16px; top: 96px; width: 250px; background: rgba(10, 11, 18, 0.72); border: 1px solid rgba(255, 255, 255, 0.14); padding: 8px 10px; font-variant-numeric: tabular-nums; }
+  #meter h4 { margin: 0 0 4px; font-size: 11px; color: var(--accent); text-transform: uppercase; letter-spacing: 0.2em; font-weight: 400; } #meter div { display: flex; gap: 6px; align-items: baseline; } #meter div span:first-child { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } #meter b { font-size: 16px; }
+  #wear { text-align: center; font-size: 12px; letter-spacing: 0.08em; text-shadow: 0 1px 2px #000; }
+  #hotbar .slot { pointer-events: auto; cursor: pointer; }
   #plates .plate { position: absolute; left: 0; top: 0; translate: -50% -100%; font-size: 12px; font-weight: 600; text-shadow: 0 1px 3px #000, 0 0 2px #000; white-space: nowrap; } #plates .plate.down { opacity: 0.5; }
-  #nums .num { position: absolute; left: 0; top: 0; font-weight: 700; font-size: 15px; color: #fff; text-shadow: 0 1px 3px #000; pointer-events: none; white-space: nowrap; }
-  #nums .num.crit { font-size: 22px; color: #ffd860; } #nums .num.hurt { color: #ff6a5a; } #nums .num.heal { color: #6cf09a; } #nums .num.note { color: #cfe8ff; font-size: 13px; letter-spacing: 0.06em; }
   #banner { position: fixed; top: 34%; left: 50%; transform: translate(-50%, -50%); font-size: 54px; font-weight: 800; letter-spacing: 0.2em; text-shadow: 0 2px 12px #000; z-index: 3; pointer-events: none; } #banner.win { color: var(--green); } #banner.dead { color: var(--red); }
-  #flash { position: fixed; inset: 0; pointer-events: none; opacity: 0; z-index: 1; mix-blend-mode: screen; }
   #toast { position: fixed; left: 50%; top: 70px; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px; z-index: 9; max-width: calc(100vw - 32px); }
   #top { position: fixed; right: 12px; top: 8px; font-size: 12px; color: var(--dim); z-index: 6; display: flex; gap: 10px; text-shadow: 0 1px 2px #000; }
   #watching { position: fixed; top: 64px; left: 50%; transform: translateX(-50%); color: var(--gold); z-index: 3; text-shadow: 0 1px 3px #000; }
@@ -74,20 +58,23 @@
   #menu .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; width: min(480px, 100%); } #menu h3 { margin: 0 0 8px; letter-spacing: 0.14em; }
   body.cine::before, body.cine::after { content: ''; position: fixed; left: 0; right: 0; height: 9vh; background: #000; z-index: 2; } body.cine::before { top: 0; } body.cine::after { bottom: 0; }
   body.cine #hud { opacity: 0; }
-  @media (max-width: 720px) { #party { top: 80px; width: 140px; } #meter { top: auto; bottom: 190px; right: 8px; width: 200px; } .slot { width: 46px; height: 52px; } .slot .nm { display: none; } #banner { font-size: 34px; } }
+  @media (max-width: 720px) { #party { top: 80px; width: 140px; } #meter { top: auto; bottom: 190px; right: 8px; width: 200px; } .slot { width: 44px; height: 44px; } .slot svg { width: 26px; height: 26px; } #banner { font-size: 34px; } }
 </style>
 </head>
 <body data-phase="connecting">
 <canvas id="c"></canvas>
-<div id="flash"></div>
+<div id="hurtv"></div>
 <div id="hud" hidden>
-  <div id="boss"><div id="bossName"></div><div class="barbox" id="bossHp"></div><div class="barbox" id="bossCast" hidden></div><div id="bossInfo"></div></div>
+  <div id="bossframe"><div class="bn"><span id="bname"></span><small id="bhp"></small></div><div class="bar" id="bbar"><div class="lag"></div><div class="fill"></div></div><div class="bar cast" id="bcast"><div class="fill"></div><div class="cn"></div></div><div id="bossInfo"></div></div>
+  <div id="tgtframe"><div class="bn" id="tname"></div><div class="bar" id="tbar"><div class="fill"></div></div><div class="bar cast" id="tcast"><div class="fill"></div><div class="cn"></div></div></div>
+  <div id="enrage"></div>
   <div id="party"></div>
   <div id="meter" hidden></div>
   <div id="plates"></div>
   <div id="nums"></div>
   <div id="hint"></div>
-  <div id="mine"><div id="wear" hidden></div><div class="barbox" id="myCast" hidden></div><div class="barbox" id="myHp"></div><div id="myRes"></div></div>
+  <div id="buffs"></div>
+  <div id="playerframe"><div id="wear" hidden></div><div class="bar" id="pcast"><div class="fill"></div><div class="cn"></div></div><div id="pips"></div><div class="bar" id="pbar"><div class="fill"></div><div class="shield"></div><div class="hpt"></div></div></div>
   <div id="hotbar"></div>
 </div>
 <div id="watching" hidden>Watching: a fight is under way. You will be in the lobby when it ends.</div>

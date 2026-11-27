@@ -34,7 +34,7 @@ export class Net {
     const s = m.s, now = performance.now() / 1000;
     if (this.snaps.length && s.tick <= this.snaps[this.snaps.length - 1].s.tick) { if (s.tick < this.snaps[0].s.tick - 5) { this.snaps = []; this.cueQ = []; this.clock = null; } else return; } // a new fight restarted the ticks
     this.snaps.push({ s, at: now }); if (this.snaps.length > 40) this.snaps.shift();
-    for (const c of m.c) this.cueQ.push({ tick: s.tick, name: c[0], args: c[1] });
+    for (const c of m.c) this.cueQ.push({ tick: s.tick, name: c[0], args: c[1], actor: c[2] === undefined ? null : c[2] });
     // the clock: aim at the newest tick, never jump backwards, close the gap gently
     if (this.clock === null || Math.abs(this.clock - s.tick) > this.hz) this.clock = s.tick;
     else this.clock += (s.tick - this.clock) * 0.1;

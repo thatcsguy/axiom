@@ -16,7 +16,8 @@
 //   { t: 'lobby', room, phase: 'lobby' | 'fight', enc, members: [{ id, name, cls, bot, inFight, sim }] }
 //   { t: 'start', enc, you, tickHz }        the encounter is loading; `you` is your character's id in snapshots (null: watching)
 //   { t: 'joined', you }                    you walked into a running training dummy, or changed class there
-//   { t: 'snap', s: <snapshot>, c: [[cue, args], ...] }   once per tick: the whole picture, and the cues of that tick
+//   { t: 'snap', s: <snapshot>, c: [[cue, args, actor?], ...] }   once per tick: the whole picture, and the cues of that tick
+//                                           (actor: the id of the player whose action raised the cue, when one did)
 //   { t: 'end', result: 'win' | 'dead' | 'ended', ft, stats }
 //   { t: 'note', text }                     something the player should read (a refused request, a locked room)
 export const PROTOCOL_VERSION = 2;

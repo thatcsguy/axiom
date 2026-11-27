@@ -17,6 +17,8 @@
     "sim": "node tools/sim.js",
     "replay": "node tools/replay.js",
     "build": "node tools/build-client.js",
-    "heroes": "node tools/import-heroes.js"
+    "heroes": "node tools/import-heroes.js",
+    "look": "node tools/import-look.js",
+    "shots": "node tools/shots.js"
   }
 }

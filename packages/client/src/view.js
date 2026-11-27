@@ -1,90 +1,134 @@
 // The 3D view: draws one blended moment of the fight from snapshots, pub and cues. It never runs rules.
-// Heroes are Threshold's own models (heroes.js, imported from Threshold). The arenas, Pentimento, the dummy, telegraphs
-// and effects are a simple stand-in look for the prototype; Threshold's full Pentimento view (the studio, the paint shader,
-// the Negative post-effect) is not ported yet.
-import * as THREE from 'three';
+//
+// The look is Threshold's own, imported unchanged into look.js (tools/import-look.js): the renderer, the post chain (NaN
+// sanitize, bloom, colour grade, flash, chromatic pulse, grain, vignette), the FX library every cue lands in, the camera rig
+// (orbit, zoom limits, shake, cinematic blend, keep-out-of-the-boss, occluder fade), the procedural world helpers, the
+// telegraph decal and bullet shaders, the warm-up that compiles every shader before a fight, and the freeze log.
+// Heroes are Threshold's models (heroes.js). What is Axiom's own: turning snapshots into hazards, bullets, heroes and
+// bodies, routing cues (with the screen-only ones kept for the player they belong to), and the Training Dummy's ring.
+// Pentimento's arena, paint and body are still simple stand-ins here (the next step ports Threshold's studio).
+import {
+  THREE, G, Input, Game, Hz as HzHook, Co, FX, Cam, W, Post, Warm, Hitch, scene, camera, renderer,
+  HZ_VERT, HZ_FRAG, BUL_V, BUL_F, frame as lookFrame, hitstop as lookHitstop,
+} from './look.js';
 import { buildHero, HeroClock } from './heroes.js';
 
-const TAU = Math.PI * 2, PI = Math.PI;
-const lerp = (a, b, t) => a + (b - a) * t, clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const TAU = Math.PI * 2, PI = Math.PI, V3 = THREE.Vector3;
+const lerp = (a, b, t) => a + (b - a) * t, clamp = (v, a, b) => v < a ? a : v > b ? b : v, sat = (v) => clamp(v, 0, 1);
+const smooth = (t) => { t = sat(t); return t * t * (3 - 2 * t); };
 const lerpAng = (a, b, t) => { let d = (b - a) % TAU; if (d > PI) d -= TAU; if (d < -PI) d += TAU; return a + d * t; };
 export const PIG = [0xffffff, 0xe23a2e, 0xf2c218, 0xf08a1e, 0x2a5fe0, 0x8a3cd0, 0x2aa858, 0x5c4332];
 export const PIG_NAME = ['clean', 'red', 'yellow', 'orange', 'blue', 'purple', 'green', 'mud'];
 const css = (n) => '#' + (n >>> 0).toString(16).padStart(6, '0');
 const R_PAINT = 20, CANVAS_N = 1024;
 
+// Per-encounter grade (Threshold's def.post) and camera. Pentimento's are Threshold's numbers (38_boss_atelier.js POST).
+const ATELIER_POST = { bloom: 0.22, threshold: 0.97, radius: 0.6, exposure: 0.92, vig: 0.7, sat: 1.08, contrast: 1.04, tint: [1.0, 1.0, 1.0] };
+const LOOKS = {
+  dummy: { post: { bloom: 0.5, threshold: 0.86, radius: 0.55, exposure: 1.12, sat: 1.06, vig: 0.85, contrast: 1.05, tint: [1.02, 1.0, 0.97] }, aimY: 1.8 },
+  atelier: { post: ATELIER_POST, nmPost: Object.assign({}, ATELIER_POST, { tint: [1.02, 1.0, 0.98], sat: 1.12 }), aimY: 3.6 },
+};
+// cues that only make sense on one player's screen: shown only when that player is you (or when no player raised them)
+const OWN = { 'fx.shake': 1, 'fx.flash': 1, 'fx.kick': 1, 'fx.num': 3, hitstop: 2, 'ui.hurtFlash': 1, 'ui.slotFlash': 1 };
+
 export class View {
   constructor(canvas, catalog) {
-    this.catalog = catalog;
-    const r = this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-    r.setPixelRatio(Math.min(2, devicePixelRatio || 1)); r.shadowMap.enabled = true; r.shadowMap.type = THREE.PCFSoftShadowMap;
-    r.toneMapping = THREE.ACESFilmicToneMapping; r.toneMappingExposure = 1.0; r.outputColorSpace = THREE.SRGBColorSpace;
-    this.scene = new THREE.Scene();
-    this.camera = new THREE.PerspectiveCamera(55, 16 / 9, 0.1, 400);
-    this.cam = { yaw: 0, pitch: 0.36, dist: 14, tDist: 14, focus: new THREE.Vector3(), shake: 0, cine: null, cineW: 0, cPos: new THREE.Vector3(), cLook: new THREE.Vector3() };
-    const hemi = this.hemi = new THREE.HemisphereLight(0xdfe6ff, 0x2a2420, 1.1); this.scene.add(hemi);
-    const sun = this.sun = new THREE.DirectionalLight(0xfff2e0, 2.2); sun.position.set(-12, 26, 10); sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048); const sc = sun.shadow.camera; sc.left = sc.bottom = -24; sc.right = sc.top = 24; sc.near = 1; sc.far = 80; sun.shadow.bias = -0.0005;
-    this.scene.add(sun, sun.target);
-    this.world = new THREE.Group(); this.scene.add(this.world);
-    this.heroes = new Map(); this.ents = new Map(); this.hz = new Map(); this.arenaId = null;
-    this.fx = new Fx(this.scene); this.nums = []; this.labels = new Map();
-    this.bulletMesh = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 10, 8), new THREE.MeshBasicMaterial({ color: 0xffffff }), 700); this.bulletMesh.count = 0; this.bulletMesh.frustumCulled = false; this.scene.add(this.bulletMesh);
-    this.flashEl = document.getElementById('flash'); this.flashA = 0;
-    this.resize(); addEventListener('resize', () => this.resize());
+    this.catalog = catalog; this.canvas = canvas;
+    this.renderer = renderer; this.scene = scene; this.camera = camera; this.cam = Cam;
+    this.world = null; this.heroes = new Map(); this.ents = new Map(); this.arenaId = null; this.spares = [];
+    this.decals = new Decals(); this.hz = this.decals.live; this.bullets = new Bullets();
+    HzHook.warm = () => this.decals.warm();
+    // the target ring (Threshold's player.ring): your target, in your class colour, turning slowly
+    this.tring = new THREE.Mesh(new THREE.RingGeometry(0.92, 1, 48), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending }));
+    this.tring.rotation.x = -PI / 2; this.tring.renderOrder = 11; this.tring.visible = false; scene.add(this.tring);
+    this.me = { pos: new V3(), facing: 0, alive: true }; this.bossF = { pos: new V3(), radius: 1, alive: true, group: null, def: { aimY: 2.5 }, phase: 0 };
+    this.shot = null; this.slowK = 1; this.slowT = 0; this.needWarm = false; this.warmMs = 0;
+    this.onUi = null; // game.js: (name, args) for the HUD cues (hurt flash)
+    // every shader compiled after the warm-up (the freeze log notices them): the warm-up's job is to keep this empty
+    this.compiled = []; Hitch.tap = (m) => { if (/^COMPILED/.test(m) && this.compiled.length < 50) this.compiled.push(m.slice(9)); };
   }
-  resize() { const w = innerWidth, h = innerHeight; this.renderer.setSize(w, h, false); this.camera.aspect = w / h; this.camera.updateProjectionMatrix(); }
 
   // ---------------- arenas
   setArena(s) {
-    const id = s.boss.id; if (this.arenaId === id && this.arenaR === s.arena.radius) return;
-    this.arenaId = id; this.arenaR = s.arena.radius;
-    for (const c of [...this.world.children]) this.world.remove(c);
-    for (const [, e] of this.ents) this.scene.remove(e.g); this.ents.clear();
-    for (const [, h] of this.hz) this.scene.remove(h.g); this.hz.clear();
-    this.paint = null; const R = s.arena.radius;
+    const id = s.boss.id; if (this.arenaId === id && this.arenaR === s.arena.radius && this.arenaNm === !!s.nm) return;
+    this.arenaId = id; this.arenaR = s.arena.radius; this.arenaNm = !!s.nm;
+    FX.clear(); Co.stopTag('look'); Cam.cine = null; Cam.cineW = 0; this.shot = null;
+    if (this.world) { scene.remove(this.world); disposeWorld(this.world); }
+    for (const [, e] of this.ents) scene.remove(e.g); this.ents.clear();
+    this.decals.clear(); this.bullets.clear();
+    this.world = new THREE.Group(); this.world.name = 'arena'; scene.add(this.world);
+    scene.fog = null; scene.environment = null; scene.background = new THREE.Color(0x05060a);
+    this.paint = null; this.dish = this.half = this.roller = null; const R = s.arena.radius;
     if (id === 'atelier') this.buildAtelier(R); else this.buildRing(R);
+    const L = LOOKS[id] || LOOKS.dummy; Post.set((s.nm && L.nmPost) || L.post || {}); Cam.minDist = 4; Cam.maxDist = 26;
+    this.lookDef = L; Game.def = { id };
+    // one hidden model of every class stays in the scene: the warm-up compiles its shaders and lights, and it keeps them
+    // alive, so a player who joins or changes class mid-fight never compiles a shader
+    if (!this.spares.length) for (const c of this.catalog.classes) { const m = buildHero(c); m.group.visible = false; m.group.position.set(0, -50, 0); scene.add(m.group); this.spares.push(m); }
+    this.needWarm = true;
   }
-  buildRing(R) { // the training ring: stone floor, a low wall, a few posts
-    this.scene.background = new THREE.Color(0x1a1d24); this.scene.fog = new THREE.Fog(0x1a1d24, 40, 120);
-    const c = document.createElement('canvas'); c.width = c.height = 512; const x = c.getContext('2d');
-    x.fillStyle = '#5a5650'; x.fillRect(0, 0, 512, 512);
-    for (let i = 0; i < 2600; i++) { x.fillStyle = `rgba(${Math.random() < 0.5 ? '255,255,255' : '0,0,0'},${Math.random() * 0.06})`; x.fillRect(Math.random() * 512, Math.random() * 512, 3 + Math.random() * 12, 3 + Math.random() * 12); }
-    x.strokeStyle = 'rgba(30,28,26,0.55)'; x.lineWidth = 3; for (let i = 0; i <= 512; i += 64) { x.beginPath(); x.moveTo(i, 0); x.lineTo(i, 512); x.moveTo(0, i); x.lineTo(512, i); x.stroke(); }
-    const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(R / 4, R / 4); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8;
-    const floor = new THREE.Mesh(new THREE.CircleGeometry(R, 96), new THREE.MeshStandardMaterial({ map: t, roughness: 0.92 })); floor.rotation.x = -PI / 2; floor.receiveShadow = true; this.world.add(floor);
-    const outer = new THREE.Mesh(new THREE.RingGeometry(R, R + 30, 96), new THREE.MeshStandardMaterial({ color: 0x24262c, roughness: 1 })); outer.rotation.x = -PI / 2; outer.position.y = -0.02; this.world.add(outer);
-    const wall = new THREE.Mesh(new THREE.TorusGeometry(R + 0.3, 0.35, 8, 96), new THREE.MeshStandardMaterial({ color: 0x7a6a58, roughness: 0.8 })); wall.rotation.x = PI / 2; wall.position.y = 0.3; wall.castShadow = true; this.world.add(wall);
-    for (let i = 0; i < 8; i++) { const a = i / 8 * TAU + 0.2, p = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.45, 3.2, 10), new THREE.MeshStandardMaterial({ color: 0x6a5a48, roughness: 0.85 })); p.position.set(Math.sin(a) * (R + 1.4), 1.6, Math.cos(a) * (R + 1.4)); p.castShadow = true; this.world.add(p);
-      const fl = new THREE.PointLight(0xffa860, 6, 14, 1.8); fl.position.set(p.position.x, 3.6, p.position.z); this.world.add(fl); const flame = new THREE.Mesh(new THREE.SphereGeometry(0.18, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffc080 })); flame.position.copy(fl.position); this.world.add(flame); }
-    this.hemi.intensity = 1.0; this.sun.intensity = 1.8;
+  // The Training Dummy's ring: a stone yard at dusk, braziers, embers on the wind. Built from Threshold's world helpers.
+  buildRing(R) {
+    const g = this.world;
+    const sky = W.sky({ top: 0x14203e, horizon: 0x8a5a58, bottom: 0x07080c, sunDir: [-0.9, 0.07, -0.42], sunColor: 0xffa060, sunSize: 0.05, sunGlow: 1.3, clouds: 0.5, cloudColor: 0xb48478, cloudDark: 0x221a2a, cloudScale: 1.3, stars: 0.5, exp: 0.55 });
+    g.add(sky); W.env(sky, 0.55);
+    scene.fog = new THREE.FogExp2(0x2a2230, 0.012);
+    W.hemi(g, 0x9aa8d0, 0x4a3828, 1.45);
+    W.sun(g, { color: 0xffd2a8, intensity: 3.0, dir: [-0.55, 0.8, 0.3], size: R + 6 });
+    const slabs = W.surface('stone', { size: 512, seed: 7, n: 5, dark: 0x5e574c, light: 0xbcb2a2, repeat: Math.max(2, Math.round(R / 4)), strength: 3 });
+    const floor = new THREE.Mesh(new THREE.CircleGeometry(R + 0.8, 96), W.mat(Object.assign({ roughness: 1, metalness: 0 }, slabs))); floor.rotation.x = -PI / 2; floor.receiveShadow = true; g.add(floor);
+    const rock = W.surface('rock', { size: 256, seed: 3, dark: 0x1c1a1c, light: 0x4a4440, repeat: 10, strength: 2.4 });
+    const outer = new THREE.Mesh(new THREE.RingGeometry(R + 0.8, R + 70, 96, 2), W.mat(Object.assign({ roughness: 1 }, rock))); outer.rotation.x = -PI / 2; outer.position.y = -0.03; outer.receiveShadow = true; g.add(outer);
+    // a chalk ring around the dummy and a worn path of darker slabs
+    const chalk = new THREE.Mesh(new THREE.RingGeometry(2.6, 2.75, 96), new THREE.MeshBasicMaterial({ color: 0xd8cfc0, transparent: true, opacity: 0.16, depthWrite: false })); chalk.rotation.x = -PI / 2; chalk.position.y = 0.02; g.add(chalk);
+    // the low wall: dressed stone blocks with a little irregularity
+    const stone = W.surface('stone', { size: 256, seed: 11, n: 5, dark: 0x4a4440, light: 0x9c9284, repeat: 1, strength: 2.6 });
+    const bm = W.mat(Object.assign({ roughness: 0.95 }, stone)), blocks = 64;
+    const bg = new THREE.BoxGeometry(1, 1, 1), wall = new THREE.InstancedMesh(bg, bm, blocks), M = new THREE.Matrix4(), Q = new THREE.Quaternion(), S = new THREE.Vector3(), P = new THREE.Vector3();
+    for (let i = 0; i < blocks; i++) { const a = (i + 0.5) / blocks * TAU, h = 0.55 + W.hash2(i, 3, 9) * 0.25, r = R + 1.3; P.set(Math.sin(a) * r, h / 2, Math.cos(a) * r); Q.setFromAxisAngle(new V3(0, 1, 0), a + (W.hash2(i, 5, 9) - 0.5) * 0.06); S.set(TAU * r / blocks * 0.96, h, 0.8); M.compose(P, Q, S); wall.setMatrixAt(i, M); }
+    wall.castShadow = wall.receiveShadow = true; g.add(wall);
+    // braziers on stone pillars: fire, a warm light, embers
+    const pil = W.mat(Object.assign({ roughness: 0.9 }, W.surface('stone', { size: 128, seed: 21, n: 3, dark: 0x3a3430, light: 0x8a8070, repeat: 1 })));
+    const iron = W.mat({ color: 0x2a2624, roughness: 0.5, metalness: 0.8 }), fire = W.glow(0xffa040, 3.2), core = W.glow(0xfff0c0, 4);
+    const N = 6;
+    for (let i = 0; i < N; i++) {
+      const a = (i + 0.5) / N * TAU, x = Math.sin(a) * (R + 3.2), z = Math.cos(a) * (R + 3.2);
+      const p = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.55, 3.4, 14), pil); p.position.set(x, 1.7, z); p.castShadow = p.receiveShadow = true; p.userData.fadeOcclude = true; p.userData.fadeCol = { r: 0.7, y0: -1.7, y1: 1.7 }; g.add(p);
+      const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.5, 0.35, 14), pil); cap.position.set(x, 3.55, z); cap.castShadow = true; g.add(cap);
+      const bowl = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.3, 0.45, 16, 1, true), iron); bowl.position.set(x, 3.95, z); g.add(bowl);
+      const fl = new THREE.Mesh(new THREE.ConeGeometry(0.42, 1.1, 10, 1, true), fire); fl.position.set(x, 4.55, z); g.add(fl);
+      const fc = new THREE.Mesh(new THREE.SphereGeometry(0.24, 10, 8), core); fc.position.set(x, 4.25, z); g.add(fc);
+      const L = new THREE.PointLight(0xff9a48, 34, 18, 1.6); L.position.set(x, 4.8, z); g.add(L);
+      fl.onBeforeRender = () => { const t = G.now * 7 + i * 1.7; fl.scale.set(1 + Math.sin(t) * 0.08, 1 + Math.sin(t * 1.7) * 0.18, 1 + Math.cos(t * 1.3) * 0.08); L.intensity = 30 + Math.sin(t * 2.3) * 4 + Math.sin(t * 5.1) * 2; };
+    }
+    g.add(W.motes({ n: 260, box: [2 * R + 16, 12, 2 * R + 16], color: 0xff8a3a, size: 0.07, vel: [0.4, 0.7, 0.1], sway: 0.8, center: [0, 6, 0], mult: 2.2 }));
+    g.add(W.motes({ n: 200, box: [2 * R + 30, 10, 2 * R + 30], color: 0xc8b8a8, size: 0.05, vel: [0.2, 0.05, 0.1], sway: 1.2, center: [0, 5, 0], alpha: 0.5 }));
   }
-  buildAtelier(R) { // a pale canvas tondo in a dark studio; the floor keeps the paint (drawn from 'atelier.lay' cues)
-    this.scene.background = new THREE.Color(0x15130f); this.scene.fog = new THREE.Fog(0x15130f, 45, 140);
+  buildAtelier(R) { // a pale canvas tondo in a dark studio; the floor keeps the paint (drawn from 'atelier.lay' cues). A stand-in.
+    const g = this.world;
+    scene.background = new THREE.Color(0x15130f); scene.fog = new THREE.Fog(0x15130f, 45, 140);
+    W.hemi(g, 0xdfe6ff, 0x2a2420, 1.15);
+    W.sun(g, { color: 0xfff2e0, intensity: 2.3, dir: [-0.45, 0.85, 0.35], size: R + 6 });
     const c = document.createElement('canvas'); c.width = c.height = CANVAS_N;
     const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 8;
     this.paint = { c, x: c.getContext('2d'), tex, strokes: [], dirty: true, neg: false, t: 0 };
     const floor = new THREE.Mesh(new THREE.PlaneGeometry(2 * R_PAINT, 2 * R_PAINT), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.75 }));
-    floor.rotation.x = -PI / 2; floor.receiveShadow = true; this.world.add(floor);
-    const frame = new THREE.Mesh(new THREE.TorusGeometry(R + 0.25, 0.3, 10, 120), new THREE.MeshStandardMaterial({ color: 0x8a6a3a, roughness: 0.45, metalness: 0.5 })); frame.rotation.x = PI / 2; frame.position.y = 0.12; frame.castShadow = true; this.world.add(frame);
-    const boards = new THREE.Mesh(new THREE.RingGeometry(R + 0.5, R + 40, 96), new THREE.MeshStandardMaterial({ color: 0x3a2c20, roughness: 0.9 })); boards.rotation.x = -PI / 2; boards.position.y = -0.03; this.world.add(boards);
+    floor.rotation.x = -PI / 2; floor.receiveShadow = true; g.add(floor);
+    const frame = new THREE.Mesh(new THREE.TorusGeometry(R + 0.25, 0.3, 10, 120), new THREE.MeshStandardMaterial({ color: 0x8a6a3a, roughness: 0.45, metalness: 0.5 })); frame.rotation.x = PI / 2; frame.position.y = 0.12; frame.castShadow = true; g.add(frame);
+    const boards = new THREE.Mesh(new THREE.RingGeometry(R + 0.5, R + 40, 96), new THREE.MeshStandardMaterial({ color: 0x3a2c20, roughness: 0.9 })); boards.rotation.x = -PI / 2; boards.position.y = -0.03; g.add(boards);
     for (let i = 0; i < 6; i++) { // easels with blank canvases around the room
-      const a = i / 6 * TAU + 0.5, g = new THREE.Group(), wood = new THREE.MeshStandardMaterial({ color: 0x6a4a2a, roughness: 0.8 });
-      for (const [x, rz] of [[-0.7, 0.12], [0.7, -0.12]]) { const leg = new THREE.Mesh(new THREE.BoxGeometry(0.12, 5, 0.12), wood); leg.position.set(x, 2.4, 0); leg.rotation.z = rz; g.add(leg); }
-      const cv = new THREE.Mesh(new THREE.BoxGeometry(2.6, 3.2, 0.08), new THREE.MeshStandardMaterial({ color: 0xe8e0cc, roughness: 0.9 })); cv.position.set(0, 3.2, 0.1); g.add(cv);
-      g.position.set(Math.sin(a) * (R + 5), 0, Math.cos(a) * (R + 5)); g.rotation.y = a + PI; g.traverse((o) => { o.castShadow = true; }); this.world.add(g);
+      const a = i / 6 * TAU + 0.5, e = new THREE.Group(), wood = new THREE.MeshStandardMaterial({ color: 0x6a4a2a, roughness: 0.8 });
+      for (const [x, rz] of [[-0.7, 0.12], [0.7, -0.12]]) { const leg = new THREE.Mesh(new THREE.BoxGeometry(0.12, 5, 0.12), wood); leg.position.set(x, 2.4, 0); leg.rotation.z = rz; e.add(leg); }
+      const cv = new THREE.Mesh(new THREE.BoxGeometry(2.6, 3.2, 0.08), new THREE.MeshStandardMaterial({ color: 0xe8e0cc, roughness: 0.9 })); cv.position.set(0, 3.2, 0.1); e.add(cv);
+      e.position.set(Math.sin(a) * (R + 5), 0, Math.cos(a) * (R + 5)); e.rotation.y = a + PI; e.traverse((o) => { o.castShadow = true; }); g.add(e);
     }
-    // the dish (wash): clear water that scrubs the paint off you
     const dish = this.dish = new THREE.Group();
     const rim = new THREE.Mesh(new THREE.TorusGeometry(2.5, 0.12, 8, 48), new THREE.MeshStandardMaterial({ color: 0xc8d8e0, roughness: 0.2, metalness: 0.3 })); rim.rotation.x = PI / 2; rim.position.y = 0.1; dish.add(rim);
     const water = new THREE.Mesh(new THREE.CircleGeometry(2.45, 48), new THREE.MeshStandardMaterial({ color: 0x8fd0ee, roughness: 0.05, metalness: 0.1, transparent: true, opacity: 0.8, emissive: 0x16384a })); water.rotation.x = -PI / 2; water.position.y = 0.06; dish.add(water);
-    this.world.add(dish);
-    // the finale's black half (Nightmare), a half disc that turns with the seam
+    g.add(dish);
     const half = this.half = new THREE.Mesh(new THREE.CircleGeometry(R, 64, -PI, PI), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.62, depthWrite: false })); half.rotation.x = -PI / 2; half.position.y = 0.03; half.visible = false;
-    const hg = this.halfG = new THREE.Group(); hg.add(half); this.world.add(hg);
-    // the roller
-    const roller = this.roller = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 12, 20), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6 })); roller.visible = false; roller.castShadow = true; this.world.add(roller);
-    this.hemi.intensity = 1.15; this.sun.intensity = 2.3;
+    const hg = this.halfG = new THREE.Group(); hg.add(half); g.add(hg);
+    const roller = this.roller = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 12, 20), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6 })); roller.visible = false; roller.castShadow = true; g.add(roller);
   }
   lay(sh) { if (this.paint) { this.paint.strokes.push(sh); if (this.paint.strokes.length > 520) this.paint.strokes.shift(); this.paint.dirty = true; } }
   drawPaint(ft, neg) {
@@ -94,7 +138,6 @@ export class View {
     x.fillStyle = neg ? '#1b1a20' : '#2b241c'; x.fillRect(0, 0, N, N);
     x.save(); x.beginPath(); x.arc(N / 2, N / 2, (R_PAINT - 0.25) * U, 0, TAU); x.clip();
     x.fillStyle = neg ? '#141419' : '#ebe4d4'; x.fillRect(0, 0, N, N);
-    // canvas weave
     x.globalAlpha = neg ? 0.05 : 0.08; x.strokeStyle = neg ? '#fff' : '#6a5e4c'; x.lineWidth = 1; x.beginPath(); for (let i = 0; i < N; i += 6) { x.moveTo(i, 0); x.lineTo(i, N); x.moveTo(0, i); x.lineTo(N, i); } x.stroke(); x.globalAlpha = 1;
     for (const sh of P.strokes) {
       const wet = sh.m && ft - sh.t0 < 20, col = sh.m ? PIG[sh.m] : (neg ? 0x141419 : 0xebe4d4);
@@ -109,12 +152,13 @@ export class View {
   // ---------------- bodies
   heroFor(p) {
     let h = this.heroes.get(p.id);
-    if (h && h.cls !== p.cls) { this.scene.remove(h.g); h = null; }
+    if (h && h.cls !== p.cls) { scene.remove(h.g); disposeWorld(h.g); h = null; }
     if (!h) {
       const cls = this.catalog.classes.find((c) => c.id === p.cls) || { id: p.cls, look: { armor: 0x555566, cloth: 0x333344, glow: 0xffffff } };
       const m = buildHero(cls), g = new THREE.Group(); g.add(m.group);
-      const ring = new THREE.Mesh(new THREE.RingGeometry(0.62, 0.78, 32), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, depthWrite: false })); ring.rotation.x = -PI / 2; ring.position.y = 0.04; g.add(ring);
-      h = { g, m, cls: p.cls, ring, x: p.x, z: p.z, y: p.y, f: p.facing }; this.heroes.set(p.id, h); this.scene.add(g);
+      // the paint you wear (Pentimento) shows as a ring at your feet
+      const ring = new THREE.Mesh(new THREE.RingGeometry(0.62, 0.78, 32), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, depthWrite: false })); ring.rotation.x = -PI / 2; ring.position.y = 0.04; ring.visible = false; g.add(ring);
+      h = { g, m, cls: p.cls, color: cls.color, ring, x: p.x, z: p.z, y: p.y, f: p.facing, deathT: 0 }; this.heroes.set(p.id, h); scene.add(g);
     }
     return h;
   }
@@ -129,166 +173,205 @@ export class View {
       m.scale.y = 0.7; m.position.y = e.radius * 0.65; m.castShadow = true; g.add(m); o.blob = m;
     }
     g.traverse((q) => { if (q.isMesh) q.castShadow = true; });
-    this.ents.set(e.id, o); this.scene.add(g); return o;
+    this.ents.set(e.id, o); scene.add(g); return o;
   }
 
   // ---------------- one frame
   // a, b, k: the blended snapshots; self: the same for your own character (less delay); you: your character's id (null: watching)
   draw(dt, a, b, k, self, you, input) {
-    HeroClock.now += dt;
+    if (this.slowT > 0) { this.slowT -= dt; if (this.slowT <= 0) this.slowK = 1; }
+    const dts = dt * this.slowK; HeroClock.now += dts;
     const s = b; this.setArena(s);
     const pub = s.boss.pub || {};
+    G.state = s.state === 'intro' || s.state === 'fight' || s.state === 'win' || s.state === 'dead' ? s.state : 'fight'; G.ft = s.t; G.nightmare = !!s.nm;
     if (this.paint) this.drawPaint(s.t, !!pub.neg);
     if (s.boss.id === 'atelier') this.drawAtelierPub(pub, s);
     // players
-    const seen = new Set();
+    const seen = new Set(); let mine = null;
     for (const pb of s.players) {
       const useSelf = pb.id === you && self, A = useSelf ? self.a : a, B = useSelf ? self.b : b, K = useSelf ? self.k : k;
       const pa = A.players.find((q) => q.id === pb.id) || pb, p2 = B.players.find((q) => q.id === pb.id) || pb;
-      const h = this.heroFor(p2); seen.add(pb.id);
+      const h = this.heroFor(p2); seen.add(pb.id); if (pb.id === you) mine = { h, p: p2 };
       h.x = lerp(pa.x, p2.x, K); h.y = lerp(pa.y, p2.y, K); h.z = lerp(pa.z, p2.z, K); h.f = lerpAng(pa.facing, p2.facing, K);
-      h.g.position.set(h.x, h.y, h.z); h.m.group.rotation.y = h.f;
-      const an = p2.anim || {}, stand = { moveSpeed: an.ms || 0, grounded: an.gr !== false, casting: p2.casting, parryT: an.parry ? 0.5 : 0, flashT: an.flash ? 0.1 : 0, rollT: an.roll || 0, aimT: an.aim ? 0.5 : 0, loadT: an.load ? 0.2 : 0, hasBuff: (id) => p2.buffs.some((q) => q.id === id), pose: null, dead: !p2.alive };
-      try { h.m.update(dt, stand); } catch (e) { /* a model that wants more of the stand-in: keep drawing */ }
-      h.m.group.rotation.x = p2.alive ? 0 : -PI / 2 * 0.92; h.m.group.position.y = p2.alive ? 0 : 0.25;
-      // the paint you wear (Pentimento) shows as a ring at your feet; your own ring is brighter
+      h.g.position.set(h.x, h.y, h.z); h.m.group.rotation.y = h.f; h.g.updateMatrixWorld(true); // the weapon trail samples world positions this frame
+      if (p2.alive) {
+        if (h.deathT > 0) { h.deathT = 0; h.m.body.rotation.x = 0; h.m.body.position.y = 0; }
+        const an = p2.anim || {}, stand = { moveSpeed: an.ms || 0, grounded: an.gr !== false, casting: p2.casting, parryT: an.parry ? 0.5 : 0, flashT: an.flash ? 0.1 : 0, rollT: an.roll || 0, aimT: an.aim ? 0.5 : 0, loadT: an.load ? 0.2 : 0, dash: an.dash ? {} : null,
+          res: p2.res, resMax: p2.resMax, shield: p2.shield || 0, shieldMax: p2.shieldMax || 1, hasBuff: (id) => p2.buffs.some((q) => q.id === id && q.t > 0), pose: null, dead: false };
+        try { h.m.update(dts, stand); } catch (e) { /* a model that wants more of the stand-in: keep drawing */ }
+      } else { h.deathT += dts; const kk = Math.min(1, h.deathT / 0.7); h.m.body.rotation.x = -kk * 1.45; h.m.body.position.y = -kk * 0.1; } // Threshold's fall
       const w = pub.pw && pub.pw[pb.id] ? pub.pw[pb.id].wear : 0;
-      h.ring.material.opacity = w ? 0.85 : pb.id === you ? 0.35 : 0; h.ring.material.color.setHex(w ? PIG[w] : 0xffffff);
+      h.ring.visible = !!w; if (w) { h.ring.material.opacity = 0.85; h.ring.material.color.setHex(PIG[w]); }
     }
-    for (const [id, h] of this.heroes) if (!seen.has(id)) { this.scene.remove(h.g); this.heroes.delete(id); }
+    for (const [id, h] of this.heroes) if (!seen.has(id)) { scene.remove(h.g); disposeWorld(h.g); this.heroes.delete(id); }
     // hostile bodies
-    const live = new Set();
+    const live = new Set(); let bossO = null;
     for (const eb of s.ents) {
       if (!eb.alive && !eb.boss) continue; live.add(eb.id);
       const ea = a.ents.find((q) => q.id === eb.id) || eb, o = this.entFor(eb, s.boss.id);
       o.g.position.set(lerp(ea.x, eb.x, k), lerp(ea.y, eb.y, k), lerp(ea.z, eb.z, k)); o.g.rotation.y = lerpAng(ea.facing, eb.facing, k);
-      o.x = o.g.position.x; o.z = o.g.position.z; o.radius = eb.radius; o.aimY = eb.boss ? (s.boss.id === 'atelier' ? 3.6 : 1.8) : 0.8;
-      if (o.update) o.update(dt, eb, pub, s);
+      o.x = o.g.position.x; o.z = o.g.position.z; o.radius = eb.radius; o.aimY = eb.boss ? (this.lookDef.aimY || 1.8) : 0.8;
+      if (eb.boss) bossO = o;
+      if (o.update) o.update(dts, eb, pub, s);
       if (o.blob) o.blob.scale.set(1 + Math.sin(HeroClock.now * 7 + eb.id) * 0.06, 0.7 + Math.cos(HeroClock.now * 6 + eb.id) * 0.06, 1);
-      const tgt = input && input.targetId === eb.id; if (o.sel) o.sel.visible = tgt;
-      if (!o.sel) { const sel = o.sel = new THREE.Mesh(new THREE.RingGeometry(eb.radius + 0.35, eb.radius + 0.55, 48), new THREE.MeshBasicMaterial({ color: 0xffd060, transparent: true, opacity: 0.8, depthWrite: false })); sel.rotation.x = -PI / 2; sel.position.y = 0.05; o.g.add(sel); sel.visible = tgt; }
     }
-    for (const [id, o] of this.ents) if (!live.has(id)) { this.scene.remove(o.g); this.ents.delete(id); }
-    this.drawHazards(s, pub);
-    // bullets
-    const bm = this.bulletMesh, M = new THREE.Matrix4(), col = new THREE.Color(); let n = 0;
-    for (const q of s.bullets) { const qa = a.bullets.find((z) => z.id === q.id) || q; M.makeScale(q.r, q.r, q.r).setPosition(lerp(qa.x, q.x, k), q.y || 1.1, lerp(qa.z, q.z, k)); bm.setMatrixAt(n, M); bm.setColorAt(n, col.setHex(q.color || 0xff5a2a)); n++; if (n >= 700) break; }
-    bm.count = n; bm.instanceMatrix.needsUpdate = true; if (bm.instanceColor) bm.instanceColor.needsUpdate = true;
-    this.fx.update(dt);
-    this.updateCamera(dt, you, input);
-    this.renderer.render(this.scene, this.camera);
-    this.drawNums(dt);
-    this.flashA = Math.max(0, this.flashA - dt * this.flashFade); if (this.flashEl) this.flashEl.style.opacity = this.flashA.toFixed(3);
+    for (const [id, o] of this.ents) if (!live.has(id)) { scene.remove(o.g); disposeWorld(o.g); this.ents.delete(id); }
+    // your target: Threshold's turning ring in your class colour
+    const tgt = input && input.targetId !== null && input.targetId !== undefined ? this.ents.get(input.targetId) : null;
+    this.tring.visible = !!(tgt && mine && mine.p.alive);
+    if (this.tring.visible) { this.tring.material.color.set(mine.h.color || '#ffffff').multiplyScalar(1.1); this.tring.scale.setScalar((tgt.radius || 1) + 0.25); this.tring.position.set(tgt.x, 0.07, tgt.z); this.tring.rotation.z += dt * 0.6; }
+    this.decals.sync(a, b, k, pub);
+    this.bullets.sync(a, b, k);
+    // what the camera follows (Threshold's Cam reads G.player, G.boss, G.arena)
+    let focus = mine ? mine.h : null;
+    if (!focus) { for (const [id, h] of this.heroes) { const p = s.players.find((q) => q.id === id); if (p && p.alive) { focus = h; break; } } }
+    if (focus) { this.me.pos.set(focus.x, focus.y, focus.z); this.me.facing = focus.f; this.me.alive = true; G.player = this.me; }
+    else G.player = null;
+    if (bossO) { const F = this.bossF; F.pos.copy(bossO.g.position); F.radius = bossO.radius || 1; F.group = bossO.g; F.def.aimY = this.lookDef.aimY || 2.5; F.phase = s.boss.phase; G.boss = F; } else G.boss = null;
+    G.arena = { floorY: 0 };
+    if (input && !Cam.cine) { Input.lookX = -input.lookX; Input.lookY = input.lookY; Input.zoom = input.zoom; }
+    if (input) input.lookX = input.lookY = input.zoom = 0;
+    if (!focus && !mine) { Cam.tDist = 22; }
+    // the cinematic shot (the sim's Cam.shot): flown here, blended in and out by Threshold's camera
+    if (this.shot) {
+      const c = this.shot; c.t += dt; const kk = smooth(c.t / c.dur);
+      c.cine.pos.set(lerp(c.p0[0], c.p1[0], kk), lerp(c.p0[1], c.p1[1], kk), lerp(c.p0[2], c.p1[2], kk)); c.cine.look.set(lerp(c.l0[0], c.l1[0], kk), lerp(c.l0[1], c.l1[1], kk), lerp(c.l0[2], c.l1[2], kk));
+      if (c.t > c.dur + 0.5 && !s.cine) { this.shot = null; Cam.cine = null; } // the release cue went missing: let go once the sim has
+    }
+    if (this.needWarm) { this.needWarm = false; const t0 = performance.now(); Warm.run(null); Hitch.reset(); this.warmMs = Math.round(performance.now() - t0); this.compiled = []; }
+    lookFrame(dt);
+    document.body.classList.toggle('cine', Cam.cineW > 0.5);
   }
   drawAtelierPub(pub, s) {
     if (this.dish && pub.wash) { this.dish.position.set(pub.wash.x, 0, pub.wash.z); this.dish.scale.setScalar(pub.wash.r / 2.5); }
     if (this.half) { this.half.visible = !!pub.split; if (pub.split) this.halfG.rotation.y = pub.lineA - PI / 2; } // the black half: x cos A - z sin A < 0
     const q = pub.roll; this.roller.visible = !!q && q.s > -22.5;
     if (q) { const fx = Math.sin(q.a), fz = Math.cos(q.a); this.roller.position.set(q.cx + fx * q.s, 0.7, q.cz + fz * q.s); this.roller.rotation.set(0, q.a, PI / 2); this.roller.material.color.setHex(PIG[q.m]); }
-    this.scene.background.setHex(pub.neg ? 0x08080c : 0x15130f);
+    scene.background.setHex(pub.neg ? 0x08080c : 0x15130f);
   }
-  drawHazards(s, pub) {
-    const live = new Set();
-    for (const h of s.hazards) {
-      live.add(h.id); let o = this.hz.get(h.id);
-      if (!o) { o = makeHazard(h); if (!o) continue; this.hz.set(h.id, o); this.scene.add(o.g); }
-      const sh = h.shape; o.g.position.set(sh.x, 0.05 + (h.id % 7) * 0.002, sh.z); if (sh.dir !== undefined && sh.type !== 'circle' && sh.type !== 'donut') o.g.rotation.y = sh.dir;
-      const colr = pub.neg ? 0xf4f4ff : (h.color === 0x16161e ? 0x2a2a40 : h.color || 0xff5a2a);
-      o.base.material.color.setHex(colr); o.fill.material.color.setHex(colr);
-      if (h.state === 'tele') { const kk = clamp(h.t / Math.max(h.delay, 1e-3), 0, 1); o.base.material.opacity = h.dmg ? 0.16 + 0.12 * kk : 0.12; o.fill.visible = !!h.dmg; o.setFill(kk); o.fill.material.opacity = 0.35; o.edge.material.opacity = h.dmg ? 0.9 : 0.4; o.edge.material.color.setHex(colr); }
-      else if (h.state === 'zone') { o.base.material.opacity = h.dmg ? 0.42 : 0.18; o.fill.visible = false; o.edge.material.opacity = 0.6; }
-      else if (h.state === 'fired') { o.base.material.opacity = 0.5; o.base.material.color.setHex(0xffffff); o.fill.visible = false; o.edge.material.opacity = 0; }
-    }
-    for (const [id, o] of this.hz) if (!live.has(id)) { this.scene.remove(o.g); o.dispose(); this.hz.delete(id); }
-  }
-
-  // ---------------- camera: Threshold's orbit rig (left drag look, right drag steer, wheel zoom), and cinematic shots
-  updateCamera(dt, you, input) {
-    const C = this.cam, me = you && this.heroes.get(you);
-    if (input && !C.cine) { C.yaw -= input.lookX; C.pitch = clamp(C.pitch + input.lookY, -0.32, 1.42); if (input.zoom) C.tDist = clamp(C.tDist * (1 + input.zoom * 0.12), 4, 26); input.lookX = input.lookY = input.zoom = 0; }
-    C.dist = lerp(C.dist, C.tDist, 1 - Math.exp(-10 * dt));
-    let fx = 0, fy = 1.5, fz = 12;
-    if (me) { fx = me.x; fy = Math.max(me.y, -3) + 1.55; fz = me.z; }
-    else { const b = [...this.ents.values()].find((o) => o.boss); if (b) { fx = b.x; fz = b.z + 4; } C.tDist = 22; }
-    const d = 1 - Math.exp(-22 * dt); C.focus.x = lerp(C.focus.x, fx, d); C.focus.z = lerp(C.focus.z, fz, d); C.focus.y = lerp(C.focus.y, fy, 1 - Math.exp(-10 * dt));
-    const cp = Math.cos(C.pitch), sp = Math.sin(C.pitch);
-    let px = C.focus.x - Math.sin(C.yaw) * cp * C.dist, py = C.focus.y + sp * C.dist, pz = C.focus.z - Math.cos(C.yaw) * cp * C.dist;
-    if (py < 0.35) py = 0.35;
-    // cinematic
-    if (C.cine) { const c = C.cine; c.t += dt; const kk = smoothstep(c.t / c.dur); C.cPos.set(lerp(c.p0[0], c.p1[0], kk), lerp(c.p0[1], c.p1[1], kk), lerp(c.p0[2], c.p1[2], kk)); C.cLook.set(lerp(c.l0[0], c.l1[0], kk), lerp(c.l0[1], c.l1[1], kk), lerp(c.l0[2], c.l1[2], kk)); if (c.t > c.dur + 1.5) C.cine = null; }
-    C.cineW = C.cine ? Math.min(1, C.cineW + dt * 2.5) : Math.max(0, C.cineW - dt * 1.4);
-    const w = smoothstep(C.cineW), cam = this.camera;
-    cam.position.set(lerp(px, C.cPos.x, w), lerp(py, C.cPos.y, w), lerp(pz, C.cPos.z, w));
-    if (C.shake > 0.001) { const q = C.shake * 0.3; cam.position.x += (Math.random() - 0.5) * q; cam.position.y += (Math.random() - 0.5) * q; cam.position.z += (Math.random() - 0.5) * q; C.shake *= Math.exp(-dt * 6); }
-    cam.lookAt(lerp(C.focus.x, C.cLook.x, w), lerp(C.focus.y, C.cLook.y, w), lerp(C.focus.z, C.cLook.z, w));
-    document.body.classList.toggle('cine', w > 0.5);
-  }
+  // camera control for tools: yaw relative to your hero's facing, pitch, distance
+  setCam(o) { if (o.yaw !== undefined) Cam.yaw = this.me.facing + o.yaw; if (o.pitch !== undefined) Cam.pitch = o.pitch; if (o.dist !== undefined) Cam.tDist = Cam.dist = o.dist; }
+  info() { return { programs: renderer.info.programs.length, warmMs: this.warmMs, compiledInFight: this.compiled.slice(), late: Hitch.count.late, errors: G.errors.slice(0, 3) }; }
 
   // ---------------- cues (one-shot effects)
-  cue(name, args, s) {
-    const v = (q) => Array.isArray(q) ? q : [0, 0, 0];
+  // actor: the player whose action raised it (null: the boss, the world). you: your character's id (null: watching).
+  cue(name, args, actor, you) {
+    const ow = OWN[name];
+    if (ow !== undefined) { const who = args[ow] !== undefined && args[ow] !== null ? args[ow] : actor; if (who !== null && who !== undefined && who !== you) return; }
+    if (name.startsWith('fx.')) return fxCue(name.slice(3), args);
     switch (name) {
       case 'atelier.lay': return this.lay(args[0]);
       case 'hero.swing': { const h = this.heroes.get(args[0]); if (h) h.m.swing(args[1], args[2]); return; }
-      case 'fx.num': return this.num(v(args[0]), String(args[1]), args[2] || '');
-      case 'fx.burst': { const o = args[3] || {}; return this.fx.burst(args[0], args[1], args[2], o); }
-      case 'fx.impact': return this.fx.burst(args[0], args[1], args[2], { n: 18, color: args[3], speed: [2, 9], life: [0.2, 0.5] });
-      case 'fx.explode': return this.fx.burst(args[0], args[1], args[2], { n: 50, color: args[3], speed: [3, 12], life: [0.3, 0.9] });
-      case 'fx.lightning': return this.fx.bolt(v(args[0]), v(args[1]), (args[2] || {}).color || 0x9fe6ff, true);
-      case 'fx.beam': return this.fx.bolt(v(args[0]), v(args[1]), (args[2] || {}).color || 0xffffff, false);
-      case 'fx.ring': { const o = args[2] || {}; return this.fx.ring(args[0], args[1], o.r0 === undefined ? 0.5 : o.r0, o.r1 || 3, o.color || 0xffffff, o.dur || 0.4); }
-      case 'fx.dome': { const o = args[3] || {}; return this.fx.ring(args[0], args[2], 0.3, o.r || 2, o.color || 0xffffff, o.dur || 0.35); }
-      case 'fx.slash': { const o = args[4] || {}; return this.fx.slash(args[0], args[1], args[2], args[3], o.r || 2.7, o.color || 0xffffff, o.dur || 0.22); }
-      case 'fx.pillar': { const o = args[2] || {}; return this.fx.ring(args[0], args[1], 0.1, (o.r || 1) * 1.4, o.color || 0xffffff, o.dur || 0.6); }
-      case 'fx.shake': this.cam.shake = Math.max(this.cam.shake, Math.min(0.9, args[0] || 0)); return;
-      case 'fx.flash': this.flashA = Math.min(0.75, args[1] || 0.3); this.flashFade = (args[2] || 2); if (this.flashEl) this.flashEl.style.background = css(args[0] || 0xffffff); return;
-      case 'cam.shot': this.cam.cine = { p0: args[0], l0: args[1], p1: args[2], l1: args[3], dur: args[4] || 3, t: 0 }; return;
-      case 'cam.release': this.cam.cine = null; return;
-    }
-  }
-  num(p, text, kind) {
-    const el = document.createElement('div'); el.className = 'num ' + kind; el.textContent = text; document.getElementById('nums').appendChild(el);
-    this.nums.push({ el, x: p[0] + (Math.random() - 0.5) * 0.4, y: p[1], z: p[2], t: 0, life: kind === 'crit' ? 1.2 : 0.9 });
-    if (this.nums.length > 60) { const o = this.nums.shift(); o.el.remove(); }
-  }
-  drawNums(dt) {
-    const v = new THREE.Vector3(), W = innerWidth, H = innerHeight;
-    for (let i = this.nums.length - 1; i >= 0; i--) {
-      const n = this.nums[i]; n.t += dt; if (n.t > n.life) { n.el.remove(); this.nums.splice(i, 1); continue; }
-      v.set(n.x, n.y + n.t * 1.4, n.z).project(this.camera);
-      if (v.z > 1) { n.el.style.display = 'none'; continue; }
-      n.el.style.display = ''; n.el.style.transform = `translate(${(v.x * 0.5 + 0.5) * W}px, ${(-v.y * 0.5 + 0.5) * H}px) translate(-50%, -50%)`; n.el.style.opacity = String(1 - Math.max(0, n.t / n.life - 0.6) / 0.4);
+      case 'hitstop': { const kk = args[0] === undefined ? 0.25 : args[0], d = args[1] === undefined ? 0.1 : args[1]; this.slowK = kk; this.slowT = d; lookHitstop(kk, d); return; }
+      case 'post.lerpTo': Co.start(Post.lerpTo(args[0] || {}, args[1] === undefined ? 2 : args[1]), 'look'); return;
+      case 'post.set': Object.assign(Post.cur, args[0] || {}); Post.apply(); return; // a phase skipped to: its grade at once
+      case 'cam.shot': { const [p0, l0, p1, l1, dur = 3, fov = 48] = args; if (!p0 || !l0 || !p1 || !l1) return; this.shot = { p0, l0, p1, l1, dur, t: 0, cine: { pos: new V3(...p0), look: new V3(...l0), fov } }; Cam.cine = this.shot.cine; return; }
+      case 'cam.release': this.shot = null; Cam.cine = null; return;
+      case 'ui.hurtFlash': case 'ui.slotFlash': if (this.onUi) this.onUi(name, args); return;
     }
   }
   // screen position of a world point (for name plates and click targeting)
-  project(x, y, z) { const v = new THREE.Vector3(x, y, z).project(this.camera); return { x: (v.x * 0.5 + 0.5) * innerWidth, y: (-v.y * 0.5 + 0.5) * innerHeight, on: v.z < 1 }; }
+  project(x, y, z) { const v = new V3(x, y, z).project(camera); return { x: (v.x * 0.5 + 0.5) * innerWidth, y: (-v.y * 0.5 + 0.5) * innerHeight, on: v.z < 1 }; }
 }
 
-const smoothstep = (t) => { t = clamp(t, 0, 1); return t * t * (3 - 2 * t); };
+// An fx.* cue arrives with Threshold's own arguments; positions come as [x, y, z] (the sim's Vec3 made plain). FX
+// functions that take vectors get THREE.Vector3s back.
+const VEC_ARGS = { lightning: [0, 1], beam: [0, 1], num: [0], missile: [0, 1] };
+function fxCue(fn, args) {
+  const f = FX[fn]; if (typeof f !== 'function') return;
+  const va = VEC_ARGS[fn];
+  if (va) { for (const i of va) { const q = args[i]; if (!Array.isArray(q) || q.length < 3 || !q.every(Number.isFinite)) return; } args = args.map((q, i) => va.includes(i) ? new V3(q[0], q[1], q[2]) : q); }
+  if (fn === 'missile') return; // a missile carries a callback into the rules; none of the ported fights send one
+  if (fn === 'beam' && args[2]) args[2] = Object.assign({}, args[2], { hold: Math.min(args[2].hold || 0, 2) });
+  try { f(...args); } catch (e) { /* a malformed cue: skip it */ }
+}
 
-// a telegraph: a faint base of the whole shape, a fill that grows as it charges, and an edge
-function makeHazard(h) {
-  const s = h.shape, g = new THREE.Group(), mat = (o) => new THREE.MeshBasicMaterial({ color: 0xff5a2a, transparent: true, opacity: o, depthWrite: false, side: THREE.DoubleSide });
-  let geo, edgeGeo, setFill;
-  const flat = (m) => { m.rotation.x = -PI / 2; return m; };
-  if (s.type === 'circle') { geo = new THREE.CircleGeometry(s.r, 48); edgeGeo = new THREE.RingGeometry(Math.max(0, s.r - 0.12), s.r, 48); }
-  else if (s.type === 'donut') { geo = new THREE.RingGeometry(s.r0, s.r1, 64); edgeGeo = new THREE.RingGeometry(s.r1 - 0.12, s.r1, 64); }
-  else if (s.type === 'cone') { const t0 = -PI / 2 - s.arc / 2; geo = s.r0 ? new THREE.RingGeometry(s.r0, s.r, 40, 1, t0, s.arc) : new THREE.CircleGeometry(s.r, 40, t0, s.arc); edgeGeo = new THREE.RingGeometry(s.r - 0.12, s.r, 40, 1, t0, s.arc); }
-  else if (s.type === 'rect') { geo = new THREE.PlaneGeometry(s.w, s.len); geo.translate(0, -s.len / 2, 0); edgeGeo = new THREE.EdgesGeometry(geo); }
-  else return null;
-  const base = flat(new THREE.Mesh(geo, mat(0.15))), fill = flat(new THREE.Mesh(geo, mat(0.35)));
-  const edge = s.type === 'rect' ? flat(new THREE.LineSegments(edgeGeo, new THREE.LineBasicMaterial({ color: 0xff5a2a, transparent: true, opacity: 0.9 }))) : flat(new THREE.Mesh(edgeGeo, mat(0.9)));
-  if (s.type === 'rect') setFill = (k) => { fill.scale.set(1, Math.max(0.001, k), 1); };
-  else if (s.type === 'donut') setFill = (k) => { const r = lerp(s.r1, s.r0, k) / s.r1; fill.scale.setScalar(1); fill.visible = k > 0.01; fill.material.opacity = 0.12 + 0.25 * k; void r; };
-  else setFill = (k) => { fill.scale.setScalar(Math.max(0.001, k)); };
-  // the rect geometry runs from the origin along local -y, which after laying flat is world +z: rotation.y = dir points it
-  g.add(base, fill, edge);
-  return { g, base, fill, edge, setFill, dispose() { geo.dispose(); edgeGeo.dispose(); base.material.dispose(); fill.material.dispose(); edge.material.dispose(); } };
+function disposeWorld(root) {
+  root.traverse((o) => {
+    if (o.geometry && !o.geometry.userData.shared) o.geometry.dispose();
+    const mats = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
+    for (const m of mats) { if (m.userData && m.userData.shared) continue; for (const key in m) { const v = m[key]; if (v && v.isTexture && !v.userData.shared) v.dispose(); } if (m.uniforms) for (const key in m.uniforms) { const v = m.uniforms[key].value; if (v && v.isTexture && !v.userData.shared) v.dispose(); } m.dispose(); }
+  });
+}
+
+// ---------------- telegraphs: Threshold's decal shader (06_combat.js Hz), fed from snapshot hazards
+class Decals {
+  constructor() {
+    this.live = new Map(); this.free = [];
+    this.geo = new THREE.PlaneGeometry(2, 2); this.geo.rotateX(-PI / 2); this.geo.userData.shared = true;
+  }
+  getMesh() {
+    let m = this.free.pop();
+    if (!m) {
+      m = new THREE.Mesh(this.geo, new THREE.ShaderMaterial({
+        uniforms: { uType: { value: 0 }, uR1: { value: 1 }, uR0: { value: 0 }, uArc: { value: 1 }, uLen: { value: 1 }, uW: { value: 1 }, uProg: { value: 0 }, uFire: { value: 0 }, uStyle: { value: 0 }, uTime: { value: 0 }, uAlpha: { value: 1 }, uBound: { value: 1 }, uCol: { value: new THREE.Color() } },
+        vertexShader: HZ_VERT, fragmentShader: HZ_FRAG, transparent: true, depthWrite: false, blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor, blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+      }));
+      m.renderOrder = 10; m.material.userData.shared = true; FX.root.add(m);
+    }
+    m.visible = true; return m;
+  }
+  warm() { if (!this.free.length && !this.live.size) { const m = this.getMesh(); m.visible = false; this.free.push(m); } }
+  release(id) { const m = this.live.get(id); if (m) { m.visible = false; this.free.push(m); this.live.delete(id); } }
+  clear() { for (const id of [...this.live.keys()]) this.release(id); }
+  sync(a, b, k, pub) {
+    const seen = new Set(), TYPE = { circle: 0, donut: 1, cone: 2, rect: 3 };
+    for (const h of b.hazards) {
+      const s = h.shape; if (!(s.type in TYPE)) continue; seen.add(h.id);
+      let m = this.live.get(h.id); if (!m) { m = this.getMesh(); this.live.set(h.id, m); }
+      const ha = a.hazards.find((q) => q.id === h.id), sa = ha ? ha.shape : s, u = m.material.uniforms;
+      u.uType.value = TYPE[s.type]; let bound = 1;
+      if (s.type === 'circle') { u.uR1.value = s.r; bound = s.r + 0.3; }
+      else if (s.type === 'donut') { u.uR1.value = s.r1; u.uR0.value = s.r0; bound = s.r1 + 0.3; }
+      else if (s.type === 'cone') { u.uR1.value = s.r; u.uR0.value = s.r0 || 0; u.uArc.value = s.arc; bound = s.r + 0.3; }
+      else { u.uLen.value = s.len; u.uW.value = s.w; bound = Math.max(s.len, s.w) + 0.3; }
+      u.uBound.value = bound; m.scale.setScalar(bound);
+      m.position.set(lerp(sa.x, s.x, k), 0.05 + (h.lift || 0), lerp(sa.z, s.z, k)); m.rotation.y = lerpAng(sa.dir || 0, s.dir || 0, k);
+      u.uCol.value.setHex(pub.neg ? 0xf4f4ff : h.color); u.uTime.value = G.now;
+      const alpha = h.alpha === undefined ? 1 : h.alpha;
+      if (h.state === 'tele') { const t = ha && ha.state === 'tele' ? lerp(ha.t, h.t, k) : h.t; u.uStyle.value = h.style || 0; u.uProg.value = sat(t / Math.max(h.delay, 1e-3)); u.uFire.value = 0; u.uAlpha.value = alpha; }
+      else if (h.state === 'zone') { const zt = ha && ha.state === 'zone' ? lerp(ha.zt || 0, h.zt || 0, k) : (h.zt || 0); u.uStyle.value = h.zoneStyle || 2; u.uProg.value = 1; u.uFire.value = 0; u.uAlpha.value = Math.min(1, (h.dur - zt) * 2) * alpha; }
+      else if (h.state === 'fired') { const ft = lerp(ha && ha.state === 'fired' ? ha.fireT : 0.28, h.fireT === undefined ? 0 : h.fireT, k); u.uProg.value = 1; u.uFire.value = sat(ft / 0.28); u.uAlpha.value = sat(ft / 0.2) * alpha; }
+    }
+    for (const id of [...this.live.keys()]) if (!seen.has(id)) this.release(id);
+  }
+}
+
+// ---------------- bullets: Threshold's hot-core spheres, ground discs and streaks (06_combat.js Bul), fed from snapshots
+class Bullets {
+  constructor() {
+    const MAX = this.MAX = 700, g = new THREE.SphereGeometry(1, 12, 9);
+    this.mesh = new THREE.InstancedMesh(g, new THREE.ShaderMaterial({ vertexShader: BUL_V, fragmentShader: BUL_F }), MAX);
+    this.tail = new THREE.InstancedMesh(g, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.3, depthWrite: false, blending: THREE.AdditiveBlending }), MAX);
+    const dg = new THREE.CircleGeometry(1, 16); dg.rotateX(-PI / 2);
+    this.disc = new THREE.InstancedMesh(dg, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.35, depthWrite: false, blending: THREE.AdditiveBlending }), MAX);
+    for (const q of [this.mesh, this.disc, this.tail]) { q.frustumCulled = false; q.count = 0; q.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(MAX * 3), 3); FX.root.add(q); }
+    this.disc.renderOrder = 9; this.tail.renderOrder = 12;
+    this.M = new THREE.Matrix4(); this.Q = new THREE.Quaternion(); this.TP = new V3(); this.TS = new V3(); this.col = new THREE.Color(); this.Y = new V3(0, 1, 0);
+  }
+  clear() { this.mesh.count = this.disc.count = this.tail.count = 0; }
+  sync(a, b, k) {
+    const { mesh, disc, tail, M, Q, TP, TS, col } = this, prev = new Map(); for (const q of a.bullets) prev.set(q.id, q);
+    let n = 0;
+    for (const q of b.bullets) {
+      if (n >= this.MAX) break; const qa = prev.get(q.id) || q;
+      const x = lerp(qa.x, q.x, k), z = lerp(qa.z, q.z, k), y = q.y === undefined ? 1.1 : q.y, t = lerp(qa.t || 0, q.t || 0, k), dir = lerpAng(qa.dir || 0, q.dir || 0, k), sp = q.speed || 0;
+      const s = q.r * (t < 0.15 ? t / 0.15 : 1);
+      M.makeScale(s, s, s); M.setPosition(x, y, z); mesh.setMatrixAt(n, M);
+      M.makeScale(s * 1.5, 1, s * 1.5); M.setPosition(x, 0.06, z); disc.setMatrixAt(n, M);
+      const tl = Math.min(4, 0.4 + sp * 0.09); Q.setFromAxisAngle(this.Y, dir); TS.set(s * 0.75, s * 0.75, s * 0.75 + s * tl);
+      TP.set(x - Math.sin(dir) * s * tl * 0.85, y, z - Math.cos(dir) * s * tl * 0.85); M.compose(TP, Q, TS); tail.setMatrixAt(n, M);
+      col.set(q.color === undefined ? 0xff5a2a : q.color); disc.setColorAt(n, col); tail.setColorAt(n, col); mesh.setColorAt(n, col);
+      n++;
+    }
+    mesh.count = disc.count = tail.count = n;
+    if (n) { mesh.instanceMatrix.needsUpdate = disc.instanceMatrix.needsUpdate = tail.instanceMatrix.needsUpdate = true; mesh.instanceColor.needsUpdate = disc.instanceColor.needsUpdate = tail.instanceColor.needsUpdate = true; }
+  }
 }
 
 // ---------------- Pentimento, the lay figure (a stand-in for Threshold's carved model)
 function layFigure(g) {
-  const wood = new THREE.MeshStandardMaterial({ color: 0xe8dcc4, roughness: 0.55, emissive: 0x000000 });
+  const wood = new THREE.MeshStandardMaterial({ color: 0xb89068, roughness: 0.55, emissive: 0x000000 });
   const joint = new THREE.MeshStandardMaterial({ color: 0x8a6a48, roughness: 0.5, metalness: 0.2 });
   const body = new THREE.Group(); g.add(body);
   const seg = (r, l, x, y, z, rx = 0, rz = 0, m = wood) => { const q = new THREE.Mesh(new THREE.CapsuleGeometry(r, l, 6, 14), m); q.position.set(x, y, z); q.rotation.set(rx, 0, rz); body.add(q); return q; };
@@ -297,7 +380,7 @@ function layFigure(g) {
   seg(0.62, 0.7, 0, 2.6, 0); seg(0.75, 0.6, 0, 3.6, 0); ball(0.3, 0, 4.3, 0);
   const head = new THREE.Mesh(new THREE.SphereGeometry(0.55, 20, 16), wood); head.scale.set(0.85, 1.1, 0.9); head.position.set(0, 4.95, 0); body.add(head);
   ball(0.26, -0.95, 3.95, 0); ball(0.26, 0.95, 3.95, 0);
-  const armL = seg(0.22, 1.1, -1.15, 3.2, 0, 0, 0.25), armR = seg(0.22, 1.1, 1.2, 3.3, 0.3, -0.6, -0.2);
+  seg(0.22, 1.1, -1.15, 3.2, 0, 0, 0.25); const armR = seg(0.22, 1.1, 1.2, 3.3, 0.3, -0.6, -0.2);
   const brush = new THREE.Group(); brush.position.set(1.5, 2.9, 0.8); body.add(brush);
   const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.08, 5.2, 8), new THREE.MeshStandardMaterial({ color: 0x5a3a1e, roughness: 0.6 })); handle.rotation.x = 0.9; brush.add(handle);
   const tip = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.8, 10), new THREE.MeshStandardMaterial({ color: 0xe23a2e, roughness: 0.4 })); tip.position.set(0, 1.55, 2.05); tip.rotation.x = 0.9 + PI; brush.add(tip);
@@ -307,26 +390,32 @@ function layFigure(g) {
     update(dt, e, pub) {
       t += dt; const need = pub.split && pub.call ? pub.call.col : pub.col; const c = PIG[need || 1] || 0xffffff;
       tip.material.color.setHex(c); swirl.material.color.setHex(c); swirl.material.emissive.setHex(c);
-      const tone = pub.split && pub.call ? (pub.call.tone === 'w' ? 0xf4efe6 : 0x1c1c22) : pub.neg ? 0x3a3a44 : 0xe8dcc4;
+      const tone = pub.split && pub.call ? (pub.call.tone === 'w' ? 0xf4efe6 : 0x1c1c22) : pub.neg ? 0x3a3a44 : 0xb89068;
       wood.color.setHex(tone); wood.emissive.setHex(pub.flood ? 0x404040 : 0x000000);
       swirl.position.y = 0.6 + ((t * 0.8) % 1) * ((pub.top !== undefined ? pub.top : 7.5) * 0.6);
       body.rotation.x = pub.down > 0 ? -0.55 : 0; body.position.y = pub.down > 0 ? -0.6 : Math.sin(t * 1.3) * 0.05;
       brush.rotation.z = (pub.swing || 0) * -1.6; armR.rotation.z = -0.2 - (pub.swing || 0) * 0.9;
-      void armL;
     },
   };
 }
 
-// ---------------- the training dummy: a post, a straw sack and a crossbar
+// ---------------- the training dummy: a post, a stuffed sack in leather straps, a crossbar, a painted target
 function dummyModel(g) {
-  const wood = new THREE.MeshStandardMaterial({ color: 0x7a5a38, roughness: 0.85 }), sack = new THREE.MeshStandardMaterial({ color: 0xc8a878, roughness: 1 });
-  const post = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.2, 3.6, 10), wood); post.position.y = 1.8; g.add(post);
-  const base = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 1.05, 0.25, 16), wood); base.position.y = 0.12; g.add(base);
+  const woodT = W.surface('wood', { size: 256, seed: 5, n: 3, dark: 0x3a2616, light: 0x8a6440, repeat: 1, strength: 2 });
+  const wood = W.mat(Object.assign({ roughness: 0.85 }, woodT)), sackT = W.surface('stone', { size: 128, seed: 9, n: 9, dark: 0x8a7050, light: 0xd8c098, repeat: 2, strength: 1.2 });
+  const sack = W.mat(Object.assign({ roughness: 1 }, sackT)), strap = W.mat({ color: 0x4a2e1c, roughness: 0.6, metalness: 0.1 }), brass = W.mat({ color: 0xc8a050, roughness: 0.35, metalness: 0.9 });
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.2, 3.6, 12), wood); post.position.y = 1.8; g.add(post);
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 1.1, 0.3, 18), wood); base.position.y = 0.15; g.add(base);
+  for (let i = 0; i < 4; i++) { const leg = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.16, 1.5), wood); const a = i / 4 * TAU + 0.4; leg.position.set(Math.sin(a) * 0.75, 0.14, Math.cos(a) * 0.75); leg.rotation.y = a; g.add(leg); }
   const body = new THREE.Group(); body.position.y = 1.6; g.add(body);
-  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.55, 0.9, 6, 14), sack); torso.position.y = 0.4; body.add(torso);
+  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.55, 0.9, 8, 16), sack); torso.position.y = 0.4; body.add(torso);
   const bar = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.16, 0.16), wood); bar.position.y = 0.85; body.add(bar);
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.4, 16, 12), sack); head.position.y = 1.55; body.add(head);
-  for (const y of [0.1, 0.65]) { const rope = new THREE.Mesh(new THREE.TorusGeometry(0.57, 0.04, 6, 24), new THREE.MeshStandardMaterial({ color: 0x5a4430 })); rope.rotation.x = PI / 2; rope.position.y = y; body.add(rope); }
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.4, 18, 14), sack); head.position.y = 1.55; body.add(head);
+  for (const y of [0.05, 0.62]) { const rope = new THREE.Mesh(new THREE.TorusGeometry(0.575, 0.045, 8, 28), strap); rope.rotation.x = PI / 2; rope.position.y = y; body.add(rope); }
+  const target = new THREE.Mesh(new THREE.CircleGeometry(0.26, 24), W.mat({ color: 0xb02a1e, roughness: 0.8 })); target.position.set(0, 0.45, 0.56); body.add(target);
+  const tin = new THREE.Mesh(new THREE.RingGeometry(0.12, 0.17, 24), W.mat({ color: 0xe8d8b0, roughness: 0.8 })); tin.position.set(0, 0.45, 0.565); body.add(tin);
+  const stud = new THREE.Mesh(new THREE.SphereGeometry(0.05, 8, 6), brass); stud.position.set(0, 1.12, 0); body.add(stud);
+  g.traverse((q) => { if (q.isMesh) { q.castShadow = true; q.receiveShadow = true; } });
   let wob = 0, lastHp = null;
   return {
     update(dt, e) {
@@ -334,58 +423,4 @@ function dummyModel(g) {
       wob *= Math.exp(-dt * 5); body.rotation.x = Math.sin(HeroClock.now * 22) * 0.12 * wob; body.rotation.z = Math.cos(HeroClock.now * 17) * 0.08 * wob;
     },
   };
-}
-
-// ---------------- particles, bolts, rings
-class Fx {
-  constructor(scene) {
-    const N = this.N = 3000; this.n = 0; this.p = new Float32Array(N * 3); this.v = new Float32Array(N * 3); this.life = new Float32Array(N); this.age = new Float32Array(N);
-    const geo = this.geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(this.p, 3)); this.col = new Float32Array(N * 3); geo.setAttribute('color', new THREE.BufferAttribute(this.col, 3));
-    this.points = new THREE.Points(geo, new THREE.PointsMaterial({ size: 0.22, vertexColors: true, transparent: true, opacity: 0.95, depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true }));
-    this.points.frustumCulled = false; scene.add(this.points); this.scene = scene; this.lines = [];
-  }
-  burst(x, y, z, o = {}) {
-    if (!Number.isFinite(x)) return;
-    const n = Math.min(60, Math.round(o.n || 10)), c = new THREE.Color(o.color === undefined ? 0xffffff : o.color), c2 = new THREE.Color(o.color2 === undefined ? (o.color === undefined ? 0xffffff : o.color) : o.color2), sp = o.speed || [2, 6], lf = o.life || [0.3, 0.7];
-    for (let i = 0; i < n; i++) {
-      const k = this.n % this.N; this.n++;
-      const a = Math.random() * TAU, u = Math.random() * 2 - 1, s = lerp(sp[0], sp[1], Math.random()), r = Math.sqrt(1 - u * u), rad = o.radius ? Math.random() * o.radius : 0;
-      this.p[k * 3] = x + Math.cos(a) * rad; this.p[k * 3 + 1] = y; this.p[k * 3 + 2] = z + Math.sin(a) * rad;
-      let vx = Math.cos(a) * r * s, vy = u * s + (o.up || 0), vz = Math.sin(a) * r * s;
-      if (o.dir) { const sp2 = o.spread === undefined ? 0.5 : o.spread; vx = (o.dir[0] + (Math.random() - 0.5) * sp2) * s; vy = (o.dir[1] + (Math.random() - 0.5) * sp2) * s; vz = (o.dir[2] + (Math.random() - 0.5) * sp2) * s; }
-      this.v[k * 3] = vx; this.v[k * 3 + 1] = vy; this.v[k * 3 + 2] = vz;
-      const cc = Math.random() < 0.5 ? c : c2; this.col[k * 3] = cc.r; this.col[k * 3 + 1] = cc.g; this.col[k * 3 + 2] = cc.b;
-      this.life[k] = lerp(lf[0], lf[1], Math.random()); this.age[k] = 0;
-    }
-  }
-  bolt(a, b, color, jag) {
-    const pts = []; const n = jag ? 9 : 2;
-    for (let i = 0; i < n; i++) { const t = i / (n - 1), j = jag && i > 0 && i < n - 1 ? 0.5 : 0; pts.push(new THREE.Vector3(lerp(a[0], b[0], t) + (Math.random() - 0.5) * j, lerp(a[1], b[1], t) + (Math.random() - 0.5) * j, lerp(a[2], b[2], t) + (Math.random() - 0.5) * j)); }
-    const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color, transparent: true, opacity: 1, blending: THREE.AdditiveBlending }));
-    this.scene.add(line); this.lines.push({ o: line, t: 0, life: 0.18 });
-  }
-  ring(x, z, r0, r1, color, dur) {
-    if (!Number.isFinite(x)) return;
-    const m = new THREE.Mesh(new THREE.RingGeometry(0.8, 1, 48), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.8, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }));
-    m.rotation.x = -PI / 2; m.position.set(x, 0.08, z); this.scene.add(m); this.lines.push({ o: m, t: 0, life: dur, r0, r1 });
-  }
-  slash(x, y, z, dir, r, color, dur) {
-    if (!Number.isFinite(x)) return;
-    const m = new THREE.Mesh(new THREE.RingGeometry(r * 0.75, r, 32, 1, -PI / 2 - 1.1, 2.2), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }));
-    const g = new THREE.Group(); m.rotation.x = -PI / 2; g.add(m); g.position.set(x, y, z); g.rotation.y = dir; this.scene.add(g); this.lines.push({ o: g, mat: m.material, t: 0, life: dur });
-  }
-  update(dt) {
-    const N = Math.min(this.n, this.N);
-    for (let k = 0; k < N; k++) {
-      if (this.age[k] >= this.life[k]) { this.p[k * 3 + 1] = -100; continue; }
-      this.age[k] += dt; this.v[k * 3 + 1] -= 6 * dt; this.v[k * 3] *= 0.98; this.v[k * 3 + 2] *= 0.98;
-      this.p[k * 3] += this.v[k * 3] * dt; this.p[k * 3 + 1] = Math.max(0.03, this.p[k * 3 + 1] + this.v[k * 3 + 1] * dt); this.p[k * 3 + 2] += this.v[k * 3 + 2] * dt;
-    }
-    this.geo.attributes.position.needsUpdate = true; this.geo.attributes.color.needsUpdate = true; this.geo.setDrawRange(0, N);
-    for (let i = this.lines.length - 1; i >= 0; i--) {
-      const L = this.lines[i]; L.t += dt; const k = L.t / L.life, mat = L.mat || L.o.material;
-      if (k >= 1) { this.scene.remove(L.o); L.o.traverse((q) => { if (q.geometry) q.geometry.dispose(); }); mat.dispose(); this.lines.splice(i, 1); continue; }
-      mat.opacity = 1 - k; if (L.r1 !== undefined) L.o.scale.setScalar(lerp(L.r0, L.r1, k) + 0.01);
-    }
-  }
 }

@@ -1,0 +1,21 @@
+{
+  "name": "axiom",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Axiom: server-authoritative co-op raid game, the successor to Threshold.",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test \"test/**/*.test.js\"",
+    "replay": "node tools/replay.js",
+    "sim": "node tools/sim.js",
+    "server": "node packages/server/src/index.js",
+    "dev": "node tools/serve.js",
+    "build": "node tools/build-client.js"
+  }
+}

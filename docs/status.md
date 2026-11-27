@@ -37,7 +37,7 @@ New in Axiom: `hash.js` (per-tick state hash), `snapshot.js` (plain-data picture
 - **No network.** `server/room.js` takes frames through a method call. No WebSocket, no MessagePack yet.
 - **No Three.js client.** `packages/client` is a 2D debug viewer, not Threshold's look. The view half of Pentimento
   (paint texture, roller mesh, Nightmare negative post-effect, intro shot framing) is not written.
-- **One fight.** Molthar and the other 17 bosses are not ported. `docs/porting.md` says how.
+- **One fight.** The other 18 bosses are not ported. `docs/porting.md` says how.
 - **Float determinism across engines is not guaranteed.** The same JavaScript engine gives the same fight every time,
   but Chromium and Node (or two V8 versions) can disagree in the last bit of `Math.sin` / `Math.cos`. A server-only
   authority does not care; client prediction (step 4) and replays across versions will. The fix, if needed, is a small

@@ -4,7 +4,7 @@ Written 2026-11-26 from a read of `threshold/src` at commit c33889f. Plan only, 
 
 ## The recommendation in one paragraph
 
-Keep the simulation in JavaScript (moved to TypeScript), pull it out into a headless package with no Three.js and no browser globals, and run that same package in three places: a Node server (the authority), the browser client (to predict your own character), and the test tools (straight in Node, no browser). Fixed 30 Hz tick, WebSocket, one small server in US West, 2 to 4 players, room codes and no accounts. Solo play runs the same server code in a Web Worker in the page, so the game still works from a static site. Rebuild the engine once, then port fights one at a time, starting with Molthar.
+Keep the simulation in JavaScript (moved to TypeScript), pull it out into a headless package with no Three.js and no browser globals, and run that same package in three places: a Node server (the authority), the browser client (to predict your own character), and the test tools (straight in Node, no browser). Fixed 30 Hz tick, WebSocket, one small server in US West, 2 to 4 players, room codes and no accounts. Solo play runs the same server code in a Web Worker in the page, so the game still works from a static site. Rebuild the engine once, then port fights one at a time, starting with Pentimento.
 
 Do not rewrite in Rust, Go or C#. The valuable part of this codebase is 2 MB of boss scripts written as generator coroutines (`yield 1.5`, `yield* mechanic()`), plus the bots that play them. Those carry over to Node almost unchanged and to nothing else.
 
@@ -94,13 +94,13 @@ These are my recommendations; all of them are yours to overrule.
 | Medium | Parallax, Euryale, Oriko, Vesper, Zugzwang, Nian, Pentimento | Shared floor state to send, or rules about one player's facing or side that need a multi-player answer. Parallax's two colours are a natural co-op puzzle. |
 | Expensive | Issen, Impresario, Janus, Garyo, Lady Fortuna, Ironjaw, Huntsman, Horologist | A duel or single-doll premise, teleports, floors that carry you, or one player tracing a figure. Each needs a real redesign, and Issen, Janus and Garyo are also the three largest files. |
 
-Suggested first three: Molthar (engine proof), Parallax (first real co-op puzzle), then one you love enough to redesign.
+Suggested first three: Pentimento (engine proof), Parallax (first real co-op puzzle), then one you love enough to redesign.
 
 ## 4. Roadmap
 
-1. **Headless core, solo.** Extract `sim/` with Molthar only, fixed tick, player driven by an input record. Milestone: a Node script plays the fight with the bot, and two runs with the same seed give the same state hash every tick.
-2. **Client as a viewer.** The browser game runs `sim/` in a Web Worker and draws only from state, `pub` and cues. Milestone: Molthar plays solo exactly as today. This is the proof that the split is clean, before any network exists.
-3. **Server and many players.** Move the worker's code to Node behind a WebSocket; replace `G.player` with a player list; add target picks and scaling. Milestone: four bots as fake clients kill Molthar on the server; two browsers can join by room code. No prediction yet.
+1. **Headless core, solo.** Extract `sim/` with Pentimento only, fixed tick, player driven by an input record. Milestone: a Node script plays the fight with the bot, and two runs with the same seed give the same state hash every tick.
+2. **Client as a viewer.** The browser game runs `sim/` in a Web Worker and draws only from state, `pub` and cues. Milestone: Pentimento plays solo exactly as today. This is the proof that the split is clean, before any network exists.
+3. **Server and many players.** Move the worker's code to Node behind a WebSocket; replace `G.player` with a player list; add target picks and scaling. Milestone: four bots as fake clients kill Pentimento on the server; two browsers can join by room code. No prediction yet.
 4. **Prediction and the shared clock.** Milestone: with 150 ms of artificial lag, movement feels local and a recorded session shows no hit the client saw as a dodge.
 5. **Lobby and the rest.** Room codes, class pick, ready check, raise, wipe and retry. Then fights, one at a time.
 
@@ -114,8 +114,8 @@ Suggested first three: Molthar (engine proof), Parallax (first real co-op puzzle
 **First three concrete steps:**
 
 1. Create the new repo with the workspace layout and bring over `01_core` (math, RNG, `Co`), `06_combat`, `07_player`, `08_classes` and `90_bot` with every Three.js, FX, Sound and UI call replaced by a cue.
-2. Port Molthar's rules half and write `tools/replay.js`: bot plays in Node, hashes state every tick, fails if two same-seed runs differ.
-3. Build the Web Worker viewer for Molthar and play it yourself.
+2. Port Pentimento's rules half and write `tools/replay.js`: bot plays in Node, hashes state every tick, fails if two same-seed runs differ.
+3. Build the Web Worker viewer for Pentimento and play it yourself.
 
 ## 5. Tooling to keep
 

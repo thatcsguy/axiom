@@ -58,7 +58,7 @@ target, B to switch the bot on or off. URL options: `?class=hexslinger`, `?nm=1`
 
 From [docs/plan.md](docs/plan.md):
 
-1. **Headless core, solo.** Done for Pentimento (the plan named Molthar; Patrick picked Pentimento first).
+1. **Headless core, solo.** Done for Pentimento.
 2. **Client as a viewer.** The sim already runs in a Web Worker behind a debug viewer; the Three.js view half of
    Pentimento, drawing only from state, `pub` and cues, is next.
 3. **Server and many players.** WebSocket rooms, a player list in place of `G.player`, target picks and scaling.

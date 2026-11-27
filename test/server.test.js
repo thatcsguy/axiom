@@ -80,6 +80,26 @@ test('a boss locks the room; four fake players (autopilot) kill Pentimento throu
   closeAll(late, ...cs);
 });
 
+test('a newcomer to Pentimento gets the paint already down (the catch-up); test hooks are off on a real server', async () => {
+  const url = base + '?room=boss3', a = await fakeClient(url, { name: 'Ann', cls: 'stormcaller', auto: true });
+  await a.until((q) => lobbyOf(q) && lobbyOf(q).members.length === 1);
+  a.send({ t: 'start', boss: 'atelier', phase: 2, god: true, skipIntro: true }); // ignored: this server was not started with test
+  await a.until((q) => q.snap && q.snap.s.state === 'fight' && q.snap.s.boss.pub.strokes >= 12, 30000);
+  assert.equal(a.snap.s.boss.phase, 0, 'a real server ignores the start-at-phase hook');
+  a.send({ t: 'test', o: { kill: true } }); // ignored too
+  const late = await fakeClient(url, { name: 'Eve' });
+  const c = await late.until((q) => q.msgs.find((m) => m.t === 'catchup'), 10000);
+  const all = c.baked.concat(c.strokes), n = all.length;
+  assert.equal(c.boss, 'atelier'); assert.ok(n >= 12, 'strokes in the catch-up: ' + n);
+  for (const sh of all) assert.ok((sh.t === 'c' || sh.t === 'r') && Number.isFinite(sh.x) && Number.isFinite(sh.z) && Number.isFinite(sh.seed) && Number.isFinite(sh.t0), 'a whole stroke');
+  // it matches the server's count at its tick
+  const at = await late.until((q) => q.snap && q.snap.s.tick >= c.tick && q.snap, 10000);
+  assert.ok(at.s.boss.pub.strokes >= n, `pub ${at.s.boss.pub.strokes} >= ${n}`);
+  assert.ok(a.snap.s.ents.find((e) => e.boss).alive, 'the kill hook was ignored');
+  a.send({ t: 'end' }); await a.until((q) => q.msgs.some((m) => m.t === 'end'));
+  closeAll(a, late);
+});
+
 test('fake players that play from snapshots alone drive their characters through input frames', async () => {
   const url = base + '?room=boss2';
   const a = await fakeClient(url, { name: 'Ann', cls: 'duskblade', brain: true }), b = await fakeClient(url, { name: 'Bob', cls: 'stormcaller', brain: true });

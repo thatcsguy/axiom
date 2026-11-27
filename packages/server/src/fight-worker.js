@@ -2,8 +2,8 @@
 // The lobby on the main thread sends it input and roster changes, and relays the snapshot message it posts every tick to
 // the room's sockets as is (it is already a JSON string).
 //
-// In:  start { setup, speed } | input { key, f } | auto { key, on } | join { entry } | leave { key } | swap { key, cls } | stop
-// Out: started { ids: [[key, simId]], hz } | snap { data } | joined { key, you } | end { result, ft, stats } | error { msg }
+// In:  start { setup, speed } | input { key, f } | auto { key, on } | join { entry } | leave { key } | swap { key, cls } | catchup { key } | test { ... } | stop
+// Out: started { ids: [[key, simId]], hz } | snap { data } | joined { key, you } | catchup { key, data } | end { result, ft, stats } | error { msg }
 import { parentPort } from 'node:worker_threads';
 import { FightRunner } from './runner.js';
 import { G } from '@axiom/sim';
@@ -35,6 +35,8 @@ parentPort.on('message', (m) => {
     else if (m.t === 'auto') run.auto(m.key, m.on);
     else if (m.t === 'join') parentPort.postMessage({ t: 'joined', key: m.entry.key, you: run.join(m.entry) });
     else if (m.t === 'leave') run.leave(m.key);
+    else if (m.t === 'test') run.test(m.o);
+    else if (m.t === 'catchup') { const data = run.catchup(); if (data) parentPort.postMessage({ t: 'catchup', key: m.key, data }); }
     else if (m.t === 'swap') parentPort.postMessage({ t: 'joined', key: m.key, you: run.swap(m.key, m.cls) });
     else if (m.t === 'stop') { clearTimeout(timer); run.stop(); run = null; parentPort.close(); }
   } catch (e) { parentPort.postMessage({ t: 'error', msg: String(e && e.stack || e) }); }

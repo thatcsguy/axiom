@@ -19,6 +19,7 @@
     "build": "node tools/build-client.js",
     "heroes": "node tools/import-heroes.js",
     "look": "node tools/import-look.js",
+    "atelier": "node tools/import-atelier.js",
     "shots": "node tools/shots.js"
   }
 }

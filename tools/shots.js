@@ -29,7 +29,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function server() {
   if (process.env.AXIOM_URL) return { url: process.env.AXIOM_URL.replace(/\/$/, ''), close() { } };
   const { startServer } = await import(path.join(ROOT, 'packages/server/src/server.js'));
-  const s = await startServer({ port: 0, host: '127.0.0.1', quiet: true });
+  const s = await startServer({ port: 0, host: '127.0.0.1', quiet: true, test: true }); // test: the start-at-phase and kill hooks
   return { url: `http://127.0.0.1:${s.port}`, close: () => s.close && s.close() };
 }
 
@@ -56,15 +56,26 @@ async function page(br, url) {
 }
 const pickClass = (p, cls) => p.evaluate((c) => window.__axiom.net.send({ t: 'class', cls: c }), cls);
 const auto = (p, on) => p.evaluate((v) => window.__axiom.net.send({ t: 'auto', on: v }), on);
-const start = (p, boss, nm) => p.evaluate(([b, n]) => window.__axiom.net.send({ t: 'start', boss: b, nm: n }), [boss, !!nm]);
-const inFight = (p) => p.waitForFunction(() => window.__axiom.S.phase === 'fight' && window.__axiom.net.latest, null, { timeout: 30000 });
+const start = (p, boss, nm, o = {}) => p.evaluate(([b, n, o]) => window.__axiom.net.send(Object.assign({ t: 'start', boss: b, nm: n }, o)), [boss, !!nm, o]);
+// the server's test hooks (tools only): { hp: fraction, fk: finale sitting, ft: fight clock, kill: true }
+const hook = (p, o) => p.evaluate((q) => window.__axiom.net.send({ t: 'test', o: q }), o);
+// wait for the drawing's own clock (the kill and other client-side timelines run on it)
+const drawn = async (p, sec) => { const r0 = await p.evaluate(() => window.__axiom.G.rt); await p.waitForFunction((q) => window.__axiom.G.rt >= q, r0 + sec, { timeout: 300000, polling: 50 }); };
+const won = (p) => p.waitForFunction(() => { const b = document.querySelector('#banner'); return b && !b.hidden; }, null, { timeout: 60000, polling: 50 });
+// a Pentimento fight with the autopilot: you (Stormcaller) and a bot (Duskblade), god mode, from a phase, the intro skipped
+async function atelier(br, url, room, o = {}) {
+  const p = await page(br, url + '/?room=' + room + '&name=Pat'); await pickClass(p, 'stormcaller'); await auto(p, true);
+  if (o.party !== false) { await p.evaluate(() => window.__axiom.net.send({ t: 'addBot', cls: 'duskblade' })); await sleep(300); }
+  await start(p, 'atelier', o.nm, { phase: o.phase || 0, skipIntro: o.intro !== true, god: true }); await inFight(p); return p;
+}
+const inFight = (p) => p.waitForFunction(() => window.__axiom.S.phase === 'fight' && window.__axiom.net.latest, null, { timeout: 180000 }); // a second page warming up in software rendering takes a while
 // wait until the fight clock reaches t seconds (the server runs in real time)
 const fightAt = (p, t) => p.waitForFunction((q) => { const s = window.__axiom.net.latest; return s && s.t >= q; }, t, { timeout: 600000, polling: 250 });
 // camera: yaw relative to the hero's facing, pitch, distance (null keeps what the client chose)
 const cam = (p, o) => p.evaluate((q) => { const v = window.__axiom.S.view; if (v && v.setCam) v.setCam(q); }, o);
 async function shot(p, name) {
   if (ONLY && !name.includes(ONLY)) return;
-  await sleep(400); const f = path.join(OUT, name + '.png'); await p.screenshot({ path: f });
+  await sleep(400); const f = path.join(OUT, name + '.png'); await p.screenshot({ path: f, timeout: 180000 });
   const info = await p.evaluate(() => (window.__axiom.S.view && window.__axiom.S.view.info) ? window.__axiom.S.view.info() : {});
   console.log('  ' + name + '.png', JSON.stringify(info));
 }
@@ -89,6 +100,22 @@ const SCENES = [
     await start(p, 'atelier'); await inFight(p);
     await p.waitForFunction(() => { const s = window.__axiom.net.latest; return s && s.state === 'intro'; }, null, { timeout: 60000 }).catch(() => {}); await sleep(2500); await shot(p, 'atelier-intro'); // the intro's cinematic shot
     await fightAt(p, 16); await shot(p, 'atelier-1'); await fightAt(p, 30); await shot(p, 'atelier-2');
+  } },
+  // Pentimento's looks, one scene each (start-at-phase hooks; the shots print compiledInFight, which must stay [])
+  { name: 'atelier-colour', async run(br, url) { const p = await atelier(br, url, 'shot-ac', { phase: 1 }); await fightAt(p, 14); await shot(p, 'atelier-colour'); } },
+  { name: 'atelier-negative', async run(br, url) { const p = await atelier(br, url, 'shot-an', { phase: 2 }); await fightAt(p, 9); await shot(p, 'atelier-negative-1'); await fightAt(p, 20); await cam(p, { yaw: 2.6, pitch: 0.3, dist: 12 }); await sleep(800); await shot(p, 'atelier-negative-2'); } },
+  { name: 'atelier-kill', async run(br, url) { const p = await atelier(br, url, 'shot-ak'); await fightAt(p, 10); await hook(p, { kill: true, hold: true }); await won(p); await drawn(p, 1.0); await shot(p, 'atelier-kill-1'); await drawn(p, 2.0); await shot(p, 'atelier-kill-2'); } },
+  { name: 'atelier-nm-colour', async run(br, url) { const p = await atelier(br, url, 'shot-nc', { nm: true }); await fightAt(p, 12); await shot(p, 'atelier-nm-colour'); } },
+  { name: 'atelier-nm-chiaroscuro', async run(br, url) { // the turn into the finale (its cinematic), then a sitting, then the last ramp step
+    const p = await atelier(br, url, 'shot-nf', { nm: true, phase: 2 }); await fightAt(p, 3.2); await shot(p, 'atelier-nm-chiaroscuro-cut'); await fightAt(p, 16); await shot(p, 'atelier-nm-chiaroscuro-1');
+    await fightAt(p, 26); await cam(p, { yaw: 2.4, pitch: 0.28, dist: 11 }); await sleep(800); await shot(p, 'atelier-nm-chiaroscuro-2');
+    await hook(p, { fk: 8 }); await fightAt(p, 48); await shot(p, 'atelier-nm-chiaroscuro-step4');
+  } },
+  { name: 'atelier-nm-lastblow', async run(br, url) { const p = await atelier(br, url, 'shot-nl', { nm: true, phase: 2 }); await fightAt(p, 12); await hook(p, { ft: 383.4 }); await fightAt(p, 387); await shot(p, 'atelier-nm-lastblow'); } },
+  { name: 'atelier-nm-kill', async run(br, url) { const p = await atelier(br, url, 'shot-nk', { nm: true, phase: 2 }); await fightAt(p, 14); await hook(p, { kill: true, hold: true }); await won(p); await drawn(p, 2.0); await shot(p, 'atelier-nm-kill-1'); await drawn(p, 3.0); await shot(p, 'atelier-nm-kill-2'); } },
+  { name: 'atelier-watcher', async run(br, url) { // someone arrives 30 s in: the catch-up shows the paint already down
+    const p = await atelier(br, url, 'shot-aw'); await fightAt(p, 30);
+    const w = await page(br, url + '/?room=shot-aw&name=Wes'); await inFight(w); await fightAt(w, 33); await shot(p, 'atelier-watcher-player'); await shot(w, 'atelier-watcher');
   } },
 ];
 

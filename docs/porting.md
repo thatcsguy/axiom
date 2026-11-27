@@ -37,5 +37,21 @@ whatever rule state the boss needs. No scene objects.
 2. Add the boss to the loop in `test/determinism.test.js`, then `npm test`.
 3. `node tools/parity.js <id> all [nm]` against a fun-stuff checkout (see the header of `tools/parity.js` for setup).
    Matching to the end, or a split explained by a last-bit trig difference, means the rules came over unchanged.
-4. Open the debug viewer with `?boss=<id>` and watch a bot fight. Add drawing for the boss's `pub` and cues to
-   `packages/client/src/main.js` if it has anything the generic hazard drawing misses.
+4. Open the debug viewer with `?boss=<id>` and watch a bot fight.
+
+## Bring its look over
+
+Pentimento shows the way (`tools/import-atelier.js`, `client/src/atelier.js`):
+
+1. **Import the view half unchanged.** Cut the boss file at markers (build and its helpers, the look half of `update` after
+   `if (G.headless) return;`, the finale's look) into a generated module. Never hand-edit it; re-run the tool.
+2. **Drive it from the server.** Each frame, fill the boss state the look reads from `pub` (blend anything that moves
+   between the two snapshots), turn the boss's own cues into what its rules used to do to the picture (`atelier.lay` ->
+   the stroke list), and call the imported update. Threshold's `G.player` there is the player the camera follows.
+3. **Viewer-only sequences** (the kill cinematic, `def.death`) play on the client from the `fight.win` cue; the server's
+   `win` state already locks everyone.
+4. **Catch-up**: if the picture keeps history (paint, scorch, ice), give the def a read-only `catchup(b)`; the server sends
+   it once to anyone who arrives mid-fight.
+5. **Warm-up**: build every mesh up front, hidden; a material only created mid-fight (adds) gets a hidden copy at build so
+   `Warm.run` compiles it. Check `view.info().compiledInFight` stays `[]` (tools/shots.js prints it).
+6. Compare with Threshold from one fixed camera (`tools/atelier-compare.js` is the pattern).

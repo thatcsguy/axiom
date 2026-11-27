@@ -83,6 +83,8 @@ npm run build               # static client in dist/
 npm run heroes -- ../fun-stuff/threshold/src   # re-import the hero models after changing them in Threshold
 npm run look -- ../fun-stuff/threshold/src     # re-import Threshold's look (post chain, FX, camera, world, warm-up, HUD css)
 npm run shots -- shots [dummy|atelier]         # screenshots of the real client against a real server (Playwright)
+node tools/atelier-compare.js ../fun-stuff/threshold/src compare   # Pentimento in Threshold and Axiom, side by side
+npm run atelier -- ../fun-stuff/threshold/src  # re-import Pentimento's look from Threshold (atelier-look.js)
 TH_GPU=1 npm run shots -- shots-gpu            # the same with your installed Chrome on the graphics card
 ```
 

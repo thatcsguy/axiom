@@ -34,7 +34,7 @@ function deep(v, depth, seen) {
 }
 
 function player(p) {
-  num(p.pos.x); num(p.pos.y); num(p.pos.z); num(p.facing); num(p.hp); num(p.res); num(p.gcd); num(p.vy); num(p.alive); num(p.grounded);
+  num(p.id); str(p.cls.id); num(p.pos.x); num(p.pos.y); num(p.pos.z); num(p.facing); num(p.hp); num(p.res); num(p.gcd); num(p.vy); num(p.alive); num(p.grounded);
   num(p.queue); num(p.combo); num(p.shield); num(p.parryT); num(p.dodgeT); num(p.invuln); num(p.speedMul); num(p.stats.dmg); num(p.stats.taken);
   num(p.target ? p.target.id : -1); num(p.casting ? p.casting.i * 1000 + p.casting.t : -1);
   for (const st of p.sk) if (st) { num(st.cd); num(st.charges); num(st.uses === Infinity ? -1 : st.uses); }
@@ -45,11 +45,11 @@ function player(p) {
 export function stateHash() {
   h = 0x811c9dc5;
   num(G.tick); num(G.now); num(G.ft); str(G.state); num(G.rng.state); num(G.timeScale); num(G.cineLock);
-  if (G.player) player(G.player);
+  num(G.players.length); for (const p of G.players) player(p);
   for (const e of G.ents) {
     num(e.id); num(e.pos.x); num(e.pos.z); num(e.facing); num(e.hp); num(e.alive); num(e.immune); num(e.dmgTaken); num(e.exposed);
     num(e.castState ? e.castState.t : -1);
-    if (e.isBoss) { num(e.phase); num(e.transitioning); num(e.liveT || 0); num(e.enraged); deep(e.state, 0, new Set()); }
+    if (e.isBoss) { num(e.focusId); num(e.rr); num(e.phase); num(e.transitioning); num(e.liveT || 0); num(e.enraged); deep(e.state, 0, new Set()); }
   }
   for (const z of Hz.list) { num(z.id); str(z.state); num(z.t); const s = z.shape; num(s.x); num(s.z); num(s.dir || 0); num(s.r || s.len || s.r1 || 0); }
   for (const b of Bul.list) { num(b.id); num(b.x); num(b.z); num(b.dir); num(b.speed); num(b.t); }

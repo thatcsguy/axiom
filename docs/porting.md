@@ -55,3 +55,20 @@ Pentimento shows the way (`tools/import-atelier.js`, `client/src/atelier.js`):
 5. **Warm-up**: build every mesh up front, hidden; a material only created mid-fight (adds) gets a hidden copy at build so
    `Warm.run` compiles it. Check `view.info().compiledInFight` stays `[]` (tools/shots.js prints it).
 6. Compare with Threshold from one fixed camera (`tools/atelier-compare.js` is the pattern).
+
+## Notes from Issen
+
+Issen (`sim/src/bosses/duelist.js`, `tools/import-duelist.js`, `client/src/duelist.js`) added a few patterns:
+
+- **Visibility and poses are flags, not meshes.** Threshold toggled `b.group.visible` and the sword mesh in rules; the sim
+  keeps `S.showA` / `S.sheath` (and the reflection's `root` pose) and publishes them. The client sets the meshes.
+- **A second body sharing one health bar** is an `Ent` with `hpOwner` (the snapshot sends `ow`); its `onImmuneHit` can
+  react to hits on an immune body (Issen's Counter on the still one).
+- **A bot hint that changed player state directly** (`p.casting = null`) asks for it in the frame instead
+  (`out.stopCast = true` -> `frame.stopCast`), so it replays.
+- **Anything gated on `!G.headless` in Threshold but needed for the fight** must run unconditionally (Niten's `Cam.shot`).
+  That changes parity with Threshold's headless tools from that point on; say so in status.md.
+- **Solo for now**: `maxPlayers: 1` on the def. Replace every `G.player` with `b.focusPlayer()` and strike the player whose
+  hit it was (`by` in `onDamaged`, or `G.actor`), so the co-op version starts from correct rules.
+- **Watchers catch up from `pub`** when the picture's history is small (ghosts, lanes, regrade levels): on the first frame
+  the client jumps the regrades to their end instead of tweening them.

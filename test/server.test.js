@@ -23,7 +23,7 @@ test('the lobby: names, classes, bots, and only the open classes', async () => {
   await a.until((c) => { const l = lobbyOf(c); return l && l.members.length === 2; });
   const w = a.msgs.find((m) => m.t === 'welcome');
   assert.deepEqual(w.classes.map((c) => c.id), ['duskblade', 'stormcaller']);
-  assert.deepEqual(w.bosses.map((q) => q.id), ['dummy', 'atelier']);
+  assert.deepEqual(w.bosses.map((q) => q.id), ['dummy', 'atelier', 'duelist']);
   a.send({ t: 'class', cls: 'hexslinger' }); a.send({ t: 'class', cls: 'stormcaller' }); a.send({ t: 'addBot', cls: 'duskblade' });
   const l = await a.until((c) => { const q = lobbyOf(c); return q && q.members.length === 3 && q.members[0].cls === 'stormcaller' && q; });
   assert.deepEqual(l.members.map((m) => [m.name, m.cls, m.bot]), [['Ann', 'stormcaller', false], ['Bob', 'stormcaller', false], ['Bot 1', 'duskblade', true]]);
@@ -78,6 +78,20 @@ test('a boss locks the room; four fake players (autopilot) kill Pentimento throu
   assert.equal(end.stats.length, 4); for (const s of end.stats) assert.ok(s.dmg > 0, s.name + ' dealt damage');
   await late.until((c) => c.msgs.some((m) => m.t === 'end') && lobbyOf(c).phase === 'lobby' && lobbyOf(c).members.length === 5);
   closeAll(late, ...cs);
+});
+
+test('Issen is solo for now: whoever starts him fights, the rest of the room watches', async () => {
+  const url = base + '?room=duel1', a = await fakeClient(url, { name: 'Ann', auto: true }), b = await fakeClient(url, { name: 'Bob', cls: 'stormcaller', auto: true });
+  await a.until((c) => lobbyOf(c) && lobbyOf(c).members.length === 2);
+  assert.equal(a.msgs.find((m) => m.t === 'welcome').bosses.find((q) => q.id === 'duelist').solo, true);
+  b.send({ t: 'start', boss: 'duelist' });
+  await b.until((c) => c.snap && c.snap.s.boss.id === 'duelist' && c.you);
+  await a.until((c) => c.snap && c.snap.s.boss.id === 'duelist');
+  assert.equal(a.msgs.find((m) => m.t === 'start').you, null, 'Ann is not in the fight');
+  assert.ok(a.msgs.some((m) => m.t === 'note' && /solo/.test(m.text)), 'Ann is told why');
+  assert.deepEqual(b.snap.s.players.map((p) => p.id), [b.you]);
+  b.send({ t: 'end' }); await a.until((q) => q.msgs.some((m) => m.t === 'end') && lobbyOf(q).phase === 'lobby');
+  closeAll(a, b);
 });
 
 test('a newcomer to Pentimento gets the paint already down (the catch-up); test hooks are off on a real server', async () => {

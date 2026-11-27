@@ -29,11 +29,11 @@ export function snapshot() {
     arena: G.arena ? { radius: G.arena.radius || 20, edge: G.arena.edge, spawn: G.arena.spawn } : null,
     player: ps[0] || null, // the first player (the debug viewer's)
     players: ps,
-    ents: G.ents.map((e) => ({ id: e.id, name: e.name, boss: e.isBoss, x: r3(e.pos.x), y: r3(e.pos.y), z: r3(e.pos.z), facing: r3(e.facing), hp: Math.round(e.hp), maxHp: e.maxHp, radius: e.radius, alive: e.alive, immune: e.immune, color: e.def && e.def.color, tg: e.targetable, ay: e.aimY, my: e.meleeY,
+    ents: G.ents.map((e) => ({ id: e.id, name: e.name, boss: e.isBoss, x: r3(e.pos.x), y: r3(e.pos.y), z: r3(e.pos.z), facing: r3(e.facing), hp: Math.round(e.hp), maxHp: e.maxHp, radius: e.radius, alive: e.alive, immune: e.immune, color: e.def && e.def.color, tg: e.targetable, ow: e.hpOwner ? e.hpOwner.id : undefined, ay: e.aimY, my: e.meleeY,
       cast: e.castState ? { name: e.castState.name, t: r3(e.castState.t), time: e.castState.time } : null })),
     // hazards and bullets also carry what Threshold's decal and bullet shaders draw from (fire flash, zone style, fade, lift, the
     // bullet's heading and age for its streak)
     hazards: Hz.list.filter((h) => h.state !== 'done').map((h) => ({ id: h.id, name: h.name, shape: h.shape, state: h.state, t: r3(h.t), delay: h.delay, dur: h.dur, zt: h.zt, color: h.color, style: h.style, zoneStyle: h.zoneStyle, alpha: h.alpha, lift: h.lift, fireT: h.state === 'fired' ? r3(h.fireT) : undefined, dmg: h.dmg })),
-    bullets: Bul.list.map((q) => ({ id: q.id, x: r3(q.x), z: r3(q.z), y: q.y, r: q.r, color: q.color, dir: r3(q.dir), speed: r3(q.speed), t: r3(q.t) })),
+    bullets: Bul.list.map((q) => ({ id: q.id, x: r3(q.x), z: r3(q.z), y: q.y, r: q.r, color: q.color, dir: r3(q.dir), speed: r3(q.speed), t: r3(q.t), p: q.petal || undefined })), // p: Issen's petals (1 rose, 2 blue), drawn as his blossom orbs too
   };
 }

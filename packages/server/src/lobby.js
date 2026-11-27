@@ -20,7 +20,7 @@ function catalog() {
     id: c.id, name: c.name, role: c.role, color: c.color, resource: c.resource.name, resKind: c.resource.kind || 'pips', resMax: c.resource.max, melee: !!c.melee, look: c.look,
     skills: c.skills.map((s, i) => s ? { slot: i, key: '123QERF'[i], id: s.id, icon: s.icon, name: s.name, desc: s.desc, gcd: s.gcd !== false, cd: s.cd || 0, cast: typeof s.cast === 'number' ? s.cast : 0, limited: s.limited || 0 } : null),
   }));
-  const bosses = ENCOUNTERS.map((id) => G.bosses.find((b) => b.id === id)).filter(Boolean).map((b) => ({ id: b.id, name: b.name, title: b.title || '', training: !!b.training, nightmare: !!b.nightmare,
+  const bosses = ENCOUNTERS.map((id) => G.bosses.find((b) => b.id === id)).filter(Boolean).map((b) => ({ id: b.id, name: b.name, title: b.title || '', training: !!b.training, nightmare: !!b.nightmare, solo: b.maxPlayers === 1,
     ticks: (b.phases || []).map((q) => q.at).filter((at) => at < 1), nmTicks: b.nightmare && b.nightmare.phases ? b.nightmare.phases.map((q) => q.at).filter((at) => at < 1) : null }));
   return { classes, bosses };
 }
@@ -94,7 +94,8 @@ export class Room {
   start(m, boss, nm, test) {
     if (this.phase !== 'lobby') return this.note(m, 'An encounter is already running.');
     const def = ENCOUNTERS.includes(boss) && G.bosses.find((d) => d.id === boss); if (!def) return this.note(m, 'Unknown encounter.');
-    const cap = def.training ? MAX_TRAINING : MAX_PARTY, party = this.members.slice(0, cap);
+    // a fight for fewer players (Issen is solo for now) takes whoever started it first
+    const cap = def.training ? MAX_TRAINING : Math.min(MAX_PARTY, def.maxPlayers || MAX_PARTY), party = (cap < this.members.length ? [m, ...this.members.filter((q) => q !== m)] : this.members).slice(0, cap);
     this.enc = { boss, name: def.name, nm: nm && !!def.nightmare, training: !!def.training, by: m.name, at: Date.now() };
     this.phase = 'fight';
     for (const q of this.members) { q.inFight = party.includes(q); q.sim = null; }
@@ -102,7 +103,7 @@ export class Room {
     w.on('message', (e) => this.onWorker(w, e));
     w.on('error', (e) => { console.error('fight worker', e); if (this.worker === w) { this.broadcast({ t: 'note', text: 'The fight crashed on the server.' }); this.stopFight(); this.backToLobby(); } });
     w.postMessage({ t: 'start', speed: this.server.speed, setup: { boss, nm: this.enc.nm, intro: !def.training && this.server.intro && !(test && test.skipIntro), phase: test ? test.phase | 0 : 0, godMode: !!(test && test.god), players: party.map((q) => ({ key: q.id, cls: q.cls, name: q.name, bot: q.bot || q.auto })) }, seed: this.server.seed });
-    if (this.members.length > party.length) for (const q of this.members) if (!q.inFight) this.note(q, `A boss takes ${cap} players: you are watching this one.`);
+    if (this.members.length > party.length) for (const q of this.members) if (!q.inFight) this.note(q, cap === 1 ? `${def.name} is a solo fight for now: you are watching ${m.name || 'them'}.` : `A boss takes ${cap} players: you are watching this one.`);
     this.sync();
   }
   onWorker(w, e) {

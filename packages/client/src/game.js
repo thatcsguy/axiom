@@ -33,13 +33,23 @@ addEventListener('keydown', (e) => {
   input.keys.add(e.code);
 });
 addEventListener('keyup', (e) => { input.keys.delete(e.code); });
-addEventListener('blur', () => { input.keys.clear(); input.l = input.r = false; });
+addEventListener('blur', () => { input.keys.clear(); input.l = input.r = false; lockOff(); });
 const cv = $('#c');
 cv.addEventListener('contextmenu', (e) => e.preventDefault());
-cv.addEventListener('mousedown', (e) => { if (e.button === 0) input.l = true; if (e.button === 2) input.r = true; input.downX = e.clientX; input.downY = e.clientY; input.moved = 0; });
+// Threshold's pointer lock (02_input.js): while a mouse button turns the camera the cursor is hidden and held in place, and it
+// comes back where it was when both buttons are up (a short click still targets what was under it)
+const lockOn = () => { if (cv.requestPointerLock && document.pointerLockElement !== cv) { try { const p = cv.requestPointerLock(); if (p && p.catch) p.catch(() => { }); } catch (err) { /* lock is optional */ } } };
+const lockOff = () => { if (document.pointerLockElement === cv) document.exitPointerLock(); };
+cv.addEventListener('mousedown', (e) => {
+  if (e.button === 0) input.l = true; else if (e.button === 2) input.r = true; else return;
+  input.downX = e.clientX; input.downY = e.clientY; input.moved = 0; input.downAt = performance.now();
+  if (playing()) lockOn();
+  e.preventDefault();
+});
 addEventListener('mouseup', (e) => {
-  if (e.button === 0) { if (input.l && input.moved < 6 && playing()) clickTarget(e.clientX, e.clientY); input.l = false; }
+  if (e.button === 0) { if (input.l && input.moved < 6 && performance.now() - input.downAt < 350 && playing()) clickTarget(input.downX, input.downY); input.l = false; }
   if (e.button === 2) input.r = false;
+  if (!input.l && !input.r) lockOff();
 });
 addEventListener('mousemove', (e) => { if (input.l || input.r) { input.lookX += e.movementX * 0.005; input.lookY += e.movementY * 0.004; input.moved += Math.abs(e.movementX) + Math.abs(e.movementY); } });
 cv.addEventListener('wheel', (e) => { e.preventDefault(); input.zoom += Math.sign(e.deltaY); }, { passive: false });
@@ -67,9 +77,9 @@ setInterval(sendInput, 1000 / 30);
 net.on('open', () => { S.phase = 'lobby'; render(); });
 net.on('close', () => { S.phase = 'offline'; render(); if (!net.closedByUs) setTimeout(() => location.reload(), 4000); });
 net.on('welcome', (m) => { S.catalog = m; S.me = m.id; if (!S.view) { S.view = new View(cv, m); S.view.onUi = (n, a) => { if (n === 'ui.hurtFlash') hurtA = Math.min(1, hurtA + 0.25 + (a[0] || 0) * 1.6); }; } render(); });
-net.on('lobby', (m) => { S.lobby = m; if (m.phase === 'lobby') { S.phase = 'lobby'; S.you = null; S.menu = false; } render(); });
+net.on('lobby', (m) => { S.lobby = m; if (m.phase === 'lobby') { S.phase = 'lobby'; S.you = null; S.menu = false; lockOff(); } render(); });
 net.on('start', (m) => { if (S.view) S.view.reset(); S.phase = 'fight'; S.enc = m.enc; S.you = m.you; S.end = null; S.camReset = true; hudKey = ''; banner(''); render(); });
-net.on('end', (m) => { S.end = m; render(); });
+net.on('end', (m) => { S.end = m; lockOff(); input.l = input.r = false; render(); });
 net.on('catchup', (m) => { if (S.view) S.view.catchUp(m, net.latest && net.latest.boss && net.latest.boss.pub); });
 net.on('note', (m) => toast(m.text));
 
@@ -120,7 +130,7 @@ function renderMenu() {
   $('#mend').onclick = () => { net.send({ t: 'end' }); S.menu = false; renderMenu(); };
   $('#mback').onclick = () => toggleMenu();
 }
-function toggleMenu() { S.menu = !S.menu; renderMenu(); }
+function toggleMenu() { S.menu = !S.menu; if (S.menu) { lockOff(); input.l = input.r = false; } renderMenu(); }
 let toastT = null;
 function toast(text) { const t = $('#toast'); t.textContent = text; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => { t.hidden = true; }, 4500); }
 function banner(text, cls = '') { const b = $('#banner'); b.textContent = text; b.className = cls; b.hidden = !text; }

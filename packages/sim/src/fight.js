@@ -142,9 +142,9 @@ export function swapClass(id, cls) {
 export const playerById = (id) => G.players.find((p) => p.id === id) || null;
 
 // Apply one input frame to a player. Order matters and is the same for a client, a recording and the bot:
-// move, jump, target, queue cancel, then presses in order.
+// move, jump, target, queue cancel, cast stop, then presses in order.
 // frame: { mx, mz (world-space move, length <= 1), held (bit i = slot i held), face (yaw while steering), jump, target (entity id),
-//          cycle (+1 / -1: next / previous target), cancelQueue, press: [slot, ...] }
+//          cycle (+1 / -1: next / previous target), cancelQueue, stopCast (stop a planted cast), press: [slot, ...] }
 export function applyInput(frame, p = G.players[0]) {
   if (!p || !frame) return;
   G.actor = p; try { applyTo(p, frame); } finally { G.actor = null; }
@@ -157,6 +157,7 @@ function applyTo(p, frame) {
   if (frame.target !== undefined) { const e = G.ents.find((q) => q.id === frame.target); if (e) p.target = e; }
   if (frame.cycle) p.cycleTarget(frame.cycle);
   if (frame.cancelQueue) p.queue = -1;
+  if (frame.stopCast) p.stopCast();
   if (frame.press) for (const i of frame.press) p.press(i);
 }
 

@@ -20,6 +20,7 @@
     "heroes": "node tools/import-heroes.js",
     "look": "node tools/import-look.js",
     "atelier": "node tools/import-atelier.js",
+    "duelist": "node tools/import-duelist.js",
     "shots": "node tools/shots.js"
   }
 }

@@ -1,7 +1,7 @@
 # Status
 
 Last updated 2026-11-27. A playable multiplayer prototype: a Node server, a Three.js browser client, rooms with a lobby,
-1 to 4 players, Duskblade and Stormcaller, the Training Dummy and Pentimento. Plan steps 1 to 4 are done (step 4:
+1 to 4 players, Duskblade and Stormcaller, the Training Dummy, Pentimento and Issen (solo for now). Plan steps 1 to 4 are done (step 4:
 your own character is predicted, the world runs on a synced clock; see "Prediction and the shared clock").
 
 ## What is ported
@@ -18,6 +18,7 @@ From Threshold (`fun-stuff/threshold/src`, as of PR #87):
 | `90_bot.js` | `sim/src/bot.js` | Writes everything it does into the tick's input frame, so a bot fight replays from its frames alone. |
 | `10_game.js` (stepping half) | `sim/src/fight.js` | `startFight(setup)`, `tick(frame)`, fixed 30 Hz (`tickHz` to change), intro played in sim time. Menus, records and the kill cinematic are client work. |
 | `38_boss_atelier.js` | `sim/src/bosses/atelier.js` | Pentimento's rules: Normal and Nightmare "Chiaroscuro", every mechanic, the paint grid, the bot hints. Meshes, shaders and the paint texture are gone; strokes leave as `atelier.lay` cues. |
+| `22_boss_duelist.js` | `sim/src/bosses/duelist.js` | Issen's rules: Normal and Nightmare (the lake, Niten with Blade and Storm, the Moons, Twin Final Verse, The Last Petal), the Stillness Counter on any hit that lands on a still body (PR #87), the bot hints. Solo for now (`maxPlayers: 1`). The cuts, the Moons' arcs, swings and regrades leave as `duelist.*` cues. |
 
 New in Axiom: `hash.js` (per-tick state hash), `snapshot.js` (plain-data picture for viewers), `replay.js`
 (record and replay), `protocol` (messages and frame sanitizer), `bosses/dummy.js` (the Training Dummy), the server and the
@@ -33,6 +34,12 @@ client described below.
   Nightmare: all four classes identical for the whole fight. Normal: Duskblade and Ashwarden identical; Stormcaller split
   at 138 s and Hexslinger at 22 s. Both splits trace to one `Math.cos` result differing in its last bit between Chromium's
   and Node's V8, which tips a near-tie in the bot's choice of where to stand. The rules carried over unchanged.
+- **Issen** (`test/duelist.test.js`): replays on every class, Normal and Nightmare (and Nightmare from Niten), bot kills on
+  both modes, the Counter on a hit that lands on a still Issen and on the still body in Niten while the other is targeted,
+  and the bot's `stopCast` frames at the bell. Parity with Threshold (30 Hz): Normal Duskblade and Ashwarden identical to
+  the kill, Stormcaller split at 158 s and Hexslinger at 178 s; Nightmare identical up to Niten's entry (its cinematic
+  lock, see "The boundary"), except one Stormcaller run that split at 55 s on an exact tie in the bot's scoring. The same last-bit cause.
+- **`stopCast`** is a new input-frame field (the bot stops a planted cast at Issen's bell through it, so it replays).
 
 ## Several players
 
@@ -83,6 +90,14 @@ client described below.
   as Threshold's main loop does. `view.js` feeds it: hero and boss stand-ins for the camera, cues into `FX` / `Post` /
   `Cam`, hazards drawn with Threshold's telegraph decal shader and bullets with its three instanced bullet shaders, from
   snapshots.
+- **Issen's look is Threshold's own** too, imported unchanged by `tools/import-duelist.js` into `client/src/duelist-look.js`
+  (the lake and deck, the hero-rig costume and its animation, cut ribbons, ghost silhouettes, petal orbs, the calm-place
+  streaks, the sunset/nightfall regrades, the reflection rising out of the lake, the Lighthouse Storm's eye, the Nightmare
+  kill `nitenDeath`, about 7.5 s, so the def's `winHold` keeps the win on screen 9 s). `client/src/duelist.js` drives it from `pub` (ghosts, lanes, the two bodies' poses, the storm, the
+  regrade levels) and the `duelist.*` cues. A watcher catches up from `pub` alone (the regrades jump to the phase now
+  playing). The reflection's body shares Issen's health (`ow` in the snapshot), so the target frame shows his health.
+- **Solo fights**: a def with `maxPlayers` takes that many members, the one who pressed start first; the rest watch with a
+  note saying why. The lobby marks such a boss `solo`.
 - **No shader compiles mid-fight**: on entering an arena the client builds everything (including one hidden hero per class,
   so a class change or a newcomer adds no program) and runs `Warm.run`; `view.info().compiledInFight` lists any program
   compiled after that (empty on the dummy solo and in a party, and on Pentimento through 30 s).
@@ -150,7 +165,10 @@ Patrick's ask (2026-11-27): make it feel client-controlled. What the client does
 - **No sound or music.** Sound cues arrive and are dropped.
 - **No quality setting in the menu.** `?quality=high|med|low` picks Threshold's quality table entry.
 - **JSON snapshots, full every tick.** Deltas or a binary format would cut bandwidth about tenfold when it matters.
-- **One fight.** The other 18 bosses are not ported. `docs/porting.md` says how.
+- **Two fights.** The other 17 bosses are not ported. Issen is solo: his co-op version comes later. `docs/porting.md` says how.
+- **Issen's Niten entry differs from Threshold's headless tools**: Threshold played that cinematic only with a screen, so
+  its headless bot fights skipped the lock; Axiom always plays it (it is a rule here). Parity with Threshold's tools holds
+  to Niten and not past it.
 - **No accounts, no records, no reconnect.** A dropped player rejoins as a newcomer (and watches a locked fight).
 - **Float determinism across engines is not guaranteed.** The same JavaScript engine gives the same fight every time,
   but Chromium and Node (or two V8 versions) can disagree in the last bit of `Math.sin` / `Math.cos`. A server-only
@@ -163,6 +181,12 @@ Patrick's ask (2026-11-27): make it feel client-controlled. What the client does
 `GOD=1 node tools/sim.js atelier all 4 nm`: Hexslinger kills in about 3:45 to 4:10, Stormcaller 5:30 to 6:20,
 Duskblade 5:15 to 6:10, Ashwarden mostly runs out of time. This matches what Threshold's own tools reported for the
 Nightmare retune (PR #77).
+
+## Bot pace on Issen (Node, 30 Hz)
+
+`GODMODE=1 node tools/sim.js duelist all 2` (hits land, health stays above 0): Normal kills in 3:39 to 4:13, Nightmare
+4:38 to 5:38 (Duskblade the slowest), as in Threshold. Without god mode the bot often dies on Normal (Moons and Draw
+Cuts) and wins some Nightmare runs: he is a hard duel.
 
 ## Next
 

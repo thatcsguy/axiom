@@ -22,6 +22,7 @@ export const Bot = {
     const A = G.arena, def = b.def, melee = !!p.cls.melee, t = p.target || b;
     const hint = def.bot ? def.bot(b, p) || {} : {};
     if (hint.jump) { p.jump(); frame.jump = 1; } // a boss hint asks for a hop (Threshold's hints called p.jump() themselves)
+    if (hint.stopCast) { p.stopCast(); frame.stopCast = 1; } // ... or to stop a planted cast (Threshold's hints cleared p.casting themselves)
     const danger = (x, z) => { let th = Hz.threat(x, z); if (def.danger) th = Math.min(th, def.danger(b, x, z)); return th; };
     me.timer -= dt;
     const period = [0, 0.4, 0.18, 0.05][level];

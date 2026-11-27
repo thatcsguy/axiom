@@ -10,7 +10,7 @@ import { stateHash } from './hash.js';
 function pack(f) {
   const o = {};
   if (f.mx) o.mx = f.mx; if (f.mz) o.mz = f.mz; if (f.held) o.held = f.held; if (f.face !== undefined) o.face = f.face;
-  if (f.jump) o.jump = 1; if (f.target !== undefined) o.target = f.target; if (f.cycle) o.cycle = f.cycle; if (f.cancelQueue) o.cancelQueue = 1;
+  if (f.jump) o.jump = 1; if (f.target !== undefined) o.target = f.target; if (f.cycle) o.cycle = f.cycle; if (f.cancelQueue) o.cancelQueue = 1; if (f.stopCast) o.stopCast = 1;
   if (f.press && f.press.length) o.press = f.press.slice();
   return o;
 }

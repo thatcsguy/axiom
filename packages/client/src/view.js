@@ -5,7 +5,8 @@
 // (orbit, zoom limits, shake, cinematic blend, keep-out-of-the-boss, occluder fade), the procedural world helpers, the
 // telegraph decal and bullet shaders, the warm-up that compiles every shader before a fight, and the freeze log.
 // Heroes are Threshold's models (heroes.js). Pentimento's studio, paint canvas, lay figure, roller, seam and kill are
-// Threshold's too (atelier-look.js, driven by atelier.js). What is Axiom's own: turning snapshots into hazards, bullets,
+// Threshold's too (atelier-look.js, driven by atelier.js), and so are Issen's lake, costume, cuts, ghosts, petals and
+// reflection (duelist-look.js, driven by duelist.js). What is Axiom's own: turning snapshots into hazards, bullets,
 // heroes and bodies, routing cues (with the screen-only ones kept for the player they belong to), and the Training Dummy's ring.
 import {
   THREE, G, Input, Game, Hz as HzHook, Co, FX, Cam, W, Post, Warm, Hitch, scene, camera, renderer,
@@ -13,6 +14,7 @@ import {
 } from './look.js';
 import { buildHero, HeroClock } from './heroes.js';
 import { AtelierView, ATELIER_POST, ATELIER_NM_POST } from './atelier.js';
+import { DuelistView, DUELIST_POST, DUELIST_NM_POST } from './duelist.js';
 
 const TAU = Math.PI * 2, PI = Math.PI, V3 = THREE.Vector3;
 const lerp = (a, b, t) => a + (b - a) * t, clamp = (v, a, b) => v < a ? a : v > b ? b : v, sat = (v) => clamp(v, 0, 1);
@@ -25,6 +27,7 @@ export const PIG_NAME = ['clean', 'red', 'yellow', 'orange', 'blue', 'purple', '
 const LOOKS = {
   dummy: { post: { bloom: 0.5, threshold: 0.86, radius: 0.55, exposure: 1.12, sat: 1.06, vig: 0.85, contrast: 1.05, tint: [1.02, 1.0, 0.97] }, aimY: 1.8 },
   atelier: { post: ATELIER_POST, nmPost: ATELIER_NM_POST, aimY: 3.6, camDist: 17, camPitch: 0.55 },
+  duelist: { post: DUELIST_POST, nmPost: DUELIST_NM_POST, aimY: 1.6 },
 };
 // cues that only make sense on one player's screen: shown only when that player is you (or when no player raised them)
 const OWN = { 'fx.shake': 1, 'fx.flash': 1, 'fx.kick': 1, 'fx.num': 3, hitstop: 2, 'ui.hurtFlash': 1, 'ui.slotFlash': 1 };
@@ -56,8 +59,9 @@ export class View {
     this.decals.clear(); this.bullets.clear();
     this.world = new THREE.Group(); this.world.name = 'arena'; scene.add(this.world);
     scene.fog = null; scene.environment = null; scene.background = new THREE.Color(0x05060a);
-    this.atl = null; const R = s.arena.radius;
+    this.atl = null; this.duel = null; const R = s.arena.radius;
     if (id === 'atelier') this.atl = new AtelierView(this.world, !!s.nm);
+    else if (id === 'duelist') this.duel = new DuelistView(this.world, !!s.nm);
     else this.buildRing(R);
     const L = LOOKS[id] || LOOKS.dummy; Post.set((s.nm && L.nmPost) || L.post || {}); Cam.minDist = 4; Cam.maxDist = 26;
     this.lookDef = L; Game.def = { id };
@@ -118,6 +122,7 @@ export class View {
   entFor(e, bossId) {
     let o = this.ents.get(e.id); if (o) return o;
     if (e.boss && this.atl) { o = { g: this.atl.group, boss: true, own: true }; this.ents.set(e.id, o); return o; } // Threshold's lay figure, built with the studio
+    if (this.duel && (o = this.duel.entFor(e))) { this.ents.set(e.id, o); return o; } // Issen and his reflection, built with the lake
     const g = new THREE.Group(); o = { g, boss: e.boss };
     if (e.boss && bossId === 'dummy') Object.assign(o, dummyModel(g));
     else if (e.boss) { const m = new THREE.Mesh(new THREE.CapsuleGeometry(e.radius * 0.7, e.radius * 2, 6, 12), new THREE.MeshStandardMaterial({ color: 0xbbbbbb })); m.position.y = e.radius * 1.7; g.add(m); }
@@ -176,12 +181,13 @@ export class View {
     let focus = mine ? mine.h : null, focusId = mine ? you : null;
     if (!focus) { for (const [id, h] of this.heroes) { const p = s.players.find((q) => q.id === id); if (p && p.alive) { focus = h; focusId = id; break; } } }
     if (this.atl) { const fp = focus ? s.players.find((q) => q.id === focusId) : null; this.atl.update(dts, s, a, k, bossO ? { x: bossO.x, z: bossO.z, facing: bossO.g.rotation.y } : null, focus ? { id: focusId, pos: new V3(focus.x, focus.y, focus.z), alive: !fp || fp.alive } : null, you, this.heroes); }
+    if (this.duel) { this.duel.update(dts, s, a, k, bossO ? { x: bossO.x, z: bossO.z, facing: bossO.g.rotation.y } : null, focus ? { id: focusId, pos: new V3(focus.x, focus.y, focus.z), alive: true } : null); }
     this.decals.sync(a, b, k, pub);
     this.bullets.sync(a, b, k);
     if (focus) { this.me.pos.set(focus.x, focus.y, focus.z); this.me.facing = focus.f; this.me.alive = true; G.player = this.me; }
     else G.player = null;
     if (bossO) { const F = this.bossF; F.pos.copy(bossO.g.position); F.radius = bossO.radius || 1; F.group = bossO.g; F.def.aimY = this.lookDef.aimY || 2.5; F.phase = s.boss.phase; G.boss = F; } else G.boss = null;
-    G.arena = { floorY: 0 };
+    G.arena = { floorY: 0, camLimit: this.duel && this.duel.arena.camLimit };
     if (input && !Cam.cine) { Input.lookX = -input.lookX; Input.lookY = input.lookY; Input.zoom = input.zoom; }
     if (input) input.lookX = input.lookY = input.zoom = 0;
     if (!focus && !mine) { Cam.tDist = 22; }
@@ -211,9 +217,10 @@ export class View {
     const ow = OWN[name];
     if (ow !== undefined) { const who = args[ow] !== undefined && args[ow] !== null ? args[ow] : actor; if (who !== null && who !== undefined && who !== you) return; }
     if (name.startsWith('fx.')) return fxCue(name.slice(3), args);
+    if (name.startsWith('duelist.')) { if (this.duel) this.duel.cue(name, args); return; }
     switch (name) {
       case 'atelier.lay': if (this.atl) this.atl.lay(args[0]); return;
-      case 'fight.win': if (this.atl) this.atl.kill(!!G.nightmare, (kk, d) => { this.slowK = kk; this.slowT = d; lookHitstop(kk, d); }); return;
+      case 'fight.win': { const slow = (kk, d) => { this.slowK = kk; this.slowT = d; lookHitstop(kk, d); }; if (this.atl) this.atl.kill(!!G.nightmare, slow); if (this.duel) this.duel.kill(!!G.nightmare, slow); return; }
       case 'hero.swing': { const h = this.heroes.get(args[0]); if (h) h.m.swing(args[1], args[2]); return; }
       case 'hitstop': { const kk = args[0] === undefined ? 0.25 : args[0], d = args[1] === undefined ? 0.1 : args[1]; this.slowK = kk; this.slowT = d; lookHitstop(kk, d); return; }
       case 'post.lerpTo': Co.start(Post.lerpTo(args[0] || {}, args[1] === undefined ? 2 : args[1]), 'look'); return;

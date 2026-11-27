@@ -64,6 +64,8 @@ export class Player {
     if (why === 'gcd' && (this.casting ? this.casting.time - this.casting.t : this.gcd) < 0.6) { this.queue = i; this.queueT = 0.7; }
     else if (why === 'range') this.say('Out of range'); else if (why === 'target') this.say('No target'); else if (/^[A-Z]/.test(why)) this.say(why);
   }
+  // stop a planted cast where it stands: what moving out of one does (the input frame's stopCast)
+  stopCast() { if (this.casting) { this.casting = null; this.gcd = Math.min(this.gcd, 0.25); } }
   castTime(s) { return typeof s.cast === 'function' ? s.cast(this) : (s.cast || 0); }
   begin(i) {
     const st = this.sk[i], s = st.def, ct = this.castTime(s);

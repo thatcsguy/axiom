@@ -35,7 +35,7 @@ export class FightRunner {
     this.hz = currentFight().hz; this.def = G.boss.def;
     return this;
   }
-  bind(key, p) { this.ids.set(key, p.id); this.inp.set(key, { mx: 0, mz: 0, held: 0, face: undefined, press: [], jump: 0, cycle: 0, target: undefined, cancelQueue: 0, at: G.now, buf: new Map(), recv: -1, stamped: false, margins: [], ia: null, late: 0, miss: 0 }); }
+  bind(key, p) { this.ids.set(key, p.id); this.inp.set(key, { mx: 0, mz: 0, held: 0, face: undefined, press: [], jump: 0, cycle: 0, target: undefined, cancelQueue: 0, stopCast: 0, at: G.now, buf: new Map(), recv: -1, stamped: false, margins: [], ia: null, late: 0, miss: 0 }); }
   player(key) { const id = this.ids.get(key); return id ? playerById(id) : null; }
   simId(key) { return this.ids.get(key) || null; }
   input(key, raw) {
@@ -46,7 +46,7 @@ export class FightRunner {
   }
   oneShots(q, f) {
     for (const i of f.press) if (q.press.length < 8) q.press.push(i);
-    if (f.jump) q.jump = 1; if (f.cycle) q.cycle = f.cycle; if (f.target !== undefined) q.target = f.target; if (f.cancelQueue) q.cancelQueue = 1;
+    if (f.jump) q.jump = 1; if (f.cycle) q.cycle = f.cycle; if (f.target !== undefined) q.target = f.target; if (f.cancelQueue) q.cancelQueue = 1; if (f.stopCast) q.stopCast = 1;
   }
   // tick-stamped frames: fs[i] is the frame for tick k - fs.length + 1 + i
   frames(key, k, fs) {
@@ -78,15 +78,16 @@ export class FightRunner {
       const fresh = G.now - q.at < STALE;
       const f = { mx: fresh ? q.mx : 0, mz: fresh ? q.mz : 0, held: fresh ? q.held : 0, press: q.press, face: fresh ? q.face : undefined };
       if (f.face === undefined) delete f.face;
-      if (q.jump) f.jump = 1; if (q.cycle) f.cycle = q.cycle; if (q.target !== undefined) f.target = q.target; if (q.cancelQueue) f.cancelQueue = 1;
-      q.press = []; q.jump = 0; q.cycle = 0; q.target = undefined; q.cancelQueue = 0;
+      if (q.jump) f.jump = 1; if (q.cycle) f.cycle = q.cycle; if (q.target !== undefined) f.target = q.target; if (q.cancelQueue) f.cancelQueue = 1; if (q.stopCast) f.stopCast = 1;
+      q.press = []; q.jump = 0; q.cycle = 0; q.target = undefined; q.cancelQueue = 0; q.stopCast = 0;
       return f;
     });
     tickAll(frames);
     if (over() && !this.ended) { this.ended = true; this.endT = G.now; }
   }
   // the end of a fight is shown for a moment (the kill, the wipe) before the room goes back to the lobby
-  get finished() { return this.ended && !this.hold && G.now - this.endT > (G.state === 'win' ? 6 : 4); }
+  // def.winHold: seconds to show a win (a boss with a long kill)
+  get finished() { return this.ended && !this.hold && G.now - this.endT > (G.state === 'win' ? (G.boss && G.boss.def.winHold) || 6 : 4); }
   get result() { return G.state === 'win' ? 'win' : G.state === 'dead' ? 'dead' : 'ended'; }
   // one tick's message for every client: the snapshot and the cues it raised
   message() { const c = this.cues; this.cues = []; return JSON.stringify({ t: 'snap', s: snapshot(), c }); }

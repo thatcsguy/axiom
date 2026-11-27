@@ -120,7 +120,7 @@ function render() {
       <label class="check"><input type="checkbox" id="auto" ${me.auto ? 'checked' : ''}> Autopilot plays me</label></div></section>
     <section><h3>Class</h3><div class="classes">${C.classes.map((c) => `<button class="cls ${me.cls === c.id ? 'on' : ''}" data-cls="${c.id}" style="--c:${c.color}"><b>${esc(c.name)}</b><span>${esc(c.role)}</span>
       <ul>${c.skills.filter(Boolean).map((k) => `<li><kbd>${k.key}</kbd> <b>${esc(k.name)}</b> <span class="dim">${esc(k.desc)}</span></li>`).join('')}</ul></button>`).join('')}</div></section>
-    <section><h3>Encounter</h3>${locked ? `<p>${esc(L.enc.name)} is under way. ${L.enc.training ? '' : 'The room is locked until it ends.'}</p>` : `<div class="encs">${C.bosses.map((b) => `<button class="enc" data-boss="${b.id}"><b>${esc(b.name)}</b><span>${esc(b.title)}</span><span class="dim">${b.training ? 'Try the classes. Anyone can walk in, change class, leave.' : 'A boss: everyone here loads in and the room locks.'}</span></button>`).join('')}</div>
+    <section><h3>Encounter</h3>${locked ? `<p>${esc(L.enc.name)} is under way. ${L.enc.training ? '' : 'The room is locked until it ends.'}</p>` : `<div class="encs">${C.bosses.map((b) => `<button class="enc" data-boss="${b.id}"><b>${esc(b.name)}</b><span>${esc(b.title)}</span><span class="dim">${b.training ? 'Try the classes. Anyone can walk in, change class, leave.' : b.solo ? 'A duel: solo for now. Only you load in; everyone else watches.' : 'A boss: everyone here loads in and the room locks.'}</span></button>`).join('')}</div>
       <label class="check"><input type="checkbox" id="nm" ${S.nm ? 'checked' : ''}> Nightmare (tuned solo so far)</label>`}</section>`;
   for (const b of document.querySelectorAll('[data-cls]')) b.onclick = () => { store.set('cls', b.dataset.cls); net.send({ t: 'class', cls: b.dataset.cls }); };
   for (const b of document.querySelectorAll('[data-boss]')) b.onclick = () => net.send({ t: 'start', boss: b.dataset.boss, nm: S.nm });
@@ -201,7 +201,7 @@ function hud(s, rdt, W, pme) {
   // your target, when it is not the boss
   const t = me && me.target !== null ? s.ents.find((e) => e.id === me.target) : null, showT = !!(t && !t.boss && t.alive);
   setCls('tf', $('#tgtframe'), 'on', showT);
-  if (showT) { setTxt('tn', $('#tname'), t.name); setSx('thp', $('#tbar .fill'), t.hp / t.maxHp); castBar('tc', $('#tcast'), castAt(W, t.id, net.renderTick, net.hz)); }
+  if (showT) { const th = (t.ow && s.ents.find((e) => e.id === t.ow)) || t; setTxt('tn', $('#tname'), t.name); setSx('thp', $('#tbar .fill'), th.hp / th.maxHp); /* a body sharing another's health (Issen's reflection) shows the owner's */ castBar('tc', $('#tcast'), castAt(W, t.id, net.renderTick, net.hz)); }
   // party and the meter, ten times a second
   if ((cache.partyT = (cache.partyT || 0) - rdt) <= 0) { cache.partyT = 0.1; party(s, pub, col); }
   mine(s, me, cdef, pub, rdt);

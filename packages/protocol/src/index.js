@@ -32,7 +32,7 @@ export const MSG = { HELLO: 'hello', WELCOME: 'welcome', LOBBY: 'lobby', START: 
 
 // The MVP's roster: Threshold's first two classes and two encounters. The sim keeps all four classes; the lobby offers these.
 export const LOBBY_CLASSES = ['duskblade', 'stormcaller'];
-export const ENCOUNTERS = ['dummy', 'atelier'];
+export const ENCOUNTERS = ['dummy', 'atelier', 'duelist'];
 export const MAX_PARTY = 4;   // a boss fight; the training dummy takes up to 8
 export const MAX_NAME = 16;
 export const cleanName = (n) => String(n || '').replace(/[^\p{L}\p{N} _.'-]/gu, '').trim().slice(0, MAX_NAME);
@@ -47,6 +47,7 @@ export const MAX_PRESSES = 4; // per tick; more is a broken or hostile client
 //   jump     1 to jump this tick
 //   target   entity id to target          cycle  +1 / -1 to cycle targets
 //   cancelQueue  1 to drop a buffered press
+//   stopCast 1 to stop a planted cast now (what moving does to one; Issen's autopilot stops before he kneels)
 //   press    slots pressed this tick, in order
 // sanitizeFrame never throws: anything malformed is dropped, so the server can apply whatever comes back.
 export function sanitizeFrame(f) {
@@ -60,6 +61,7 @@ export function sanitizeFrame(f) {
   if (Number.isInteger(f.target) && f.target > 0) out.target = f.target;
   if (f.cycle === 1 || f.cycle === -1) out.cycle = f.cycle;
   if (f.cancelQueue) out.cancelQueue = 1;
+  if (f.stopCast) out.stopCast = 1;
   if (Array.isArray(f.press)) for (const i of f.press.slice(0, MAX_PRESSES)) if (Number.isInteger(i) && i >= 0 && i < SLOTS) out.press.push(i);
   return out;
 }

@@ -2,8 +2,8 @@
 // The lobby on the main thread sends it input and roster changes, and relays the snapshot message it posts every tick to
 // the room's sockets as is (it is already a JSON string).
 //
-// In:  start { setup, speed } | input { key, f } | frames { key, k, fs } | auto { key, on } | join { entry } | leave { key } | swap { key, cls } | catchup { key } | test { ... } | stop
-// Out: started { ids: [[key, simId]], hz } | snap { data, own: [[key, json]] } | joined { key, you } | catchup { key, data } | end { result, ft, stats } | error { msg }
+// In:  start { setup, speed } | go | input { key, f } | frames { key, k, fs } | auto { key, on } | join { entry } | leave { key } | swap { key, cls } | catchup { key } | test { ... } | stop
+// Out: started { ids: [[key, simId]], hz, preview } | snap { data, own: [[key, json]] } | joined { key, you } | catchup { key, data } | end { result, ft, stats } | error { msg }
 import { parentPort } from 'node:worker_threads';
 import { FightRunner } from './runner.js';
 import { G } from '@axiom/sim';
@@ -28,9 +28,11 @@ parentPort.on('message', (m) => {
   try {
     if (m.t === 'start') {
       speed = m.speed || 1; run = new FightRunner(m.seed !== undefined ? Object.assign({ seed: m.seed }, m.setup) : m.setup).start();
-      parentPort.postMessage({ t: 'started', ids: [...run.ids], hz: run.hz, seed: run.setup.seed });
-      loop();
+      // the fight is set up but holds at its first tick until the lobby says go (every player's client has loaded it);
+      // preview is that first moment, for the clients to build the arena from
+      parentPort.postMessage({ t: 'started', ids: [...run.ids], hz: run.hz, seed: run.setup.seed, preview: run.preview() });
     } else if (!run) return;
+    else if (m.t === 'go') { if (!timer) loop(); }
     else if (m.t === 'input') run.input(m.key, m.f);
     else if (m.t === 'frames') run.frames(m.key, m.k, m.fs);
     else if (m.t === 'auto') run.auto(m.key, m.on);

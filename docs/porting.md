@@ -7,7 +7,7 @@ How Pentimento (`sim/src/bosses/atelier.js`) was brought over, written as rules 
 A Threshold boss file mixes rules and looks. The sim gets the rules half only:
 
 - **Keep**: phases, mechanics coroutines, hazards, bullets, adds, `state`, `update`, `danger`, `bot`, nightmare block.
-- **Drop**: meshes, materials, shaders, textures, lights, music choice, the death cinematic, `def.icon`.
+- **Drop**: meshes, materials, shaders, textures, lights, music choice (the client plays it: add the boss file to `tools/import-audio.js` and its Nightmare phase levels to `NM_LEVELS` in `client/src/sound.js`), the death cinematic, `def.icon`.
 - **Turn into cues**: anything a player should see or hear that does not change the fight.
   `FX.*`, `Sound.*`, `Music.*`, `UI.*` and `Post.*` already emit cues through `view.js`, so most calls can stay as they are.
   For a boss-specific picture, emit your own: `View.cue('atelier.lay', shape)`.

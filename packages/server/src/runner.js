@@ -15,8 +15,8 @@ import { startFight, tickAll, over, snapshot, stateHash, currentFight, addPlayer
 import '@axiom/sim/bosses';
 import { sanitizeFrame } from '@axiom/protocol';
 
-// Cues the client does something with. Sound and music are left out until the client plays audio.
-const SEND_CUE = (name) => !name.startsWith('sound.') && !name.startsWith('music.') && name !== 'ui.slotFlash';
+// Cues the client does something with (all but the hotbar flash, which the client does itself when you press).
+const SEND_CUE = (name) => name !== 'ui.slotFlash';
 const STALE = 0.6; // seconds without input before a player's character stops walking (a dropped or frozen client)
 
 export class FightRunner {
@@ -30,7 +30,7 @@ export class FightRunner {
     // the screen-only ones (flash, shake, numbers, hit-stop) for the player they belong to
     View.setSink((name, args) => { if (!SEND_CUE(name)) return; const a = G.actor; this.cues.push(a ? [name, args, a.id] : [name, args]); });
     const s = this.setup;
-    startFight({ boss: s.boss, nm: s.nm, seed: s.seed, intro: s.intro, phase: s.phase || 0, godMode: !!s.godMode, players: s.players.map((e) => ({ cls: e.cls, bot: e.bot ? 3 : 0, name: e.name })) });
+    startFight({ boss: s.boss, nm: s.nm, seed: s.seed, intro: s.intro, phase: s.phase || 0, godMode: !!s.godMode, superDmg: !!s.superDmg, players: s.players.map((e) => ({ cls: e.cls, bot: e.bot ? 3 : 0, name: e.name })) });
     G.players.forEach((p, i) => this.bind(s.players[i].key, p));
     this.hz = currentFight().hz; this.def = G.boss.def;
     return this;
@@ -90,6 +90,8 @@ export class FightRunner {
   get finished() { return this.ended && !this.hold && G.now - this.endT > (G.state === 'win' ? (G.boss && G.boss.def.winHold) || 6 : 4); }
   get result() { return G.state === 'win' ? 'win' : G.state === 'dead' ? 'dead' : 'ended'; }
   // one tick's message for every client: the snapshot and the cues it raised
+  // the fight's first moment before it runs (the loading screen draws it); its cues stay for the first real snapshot
+  preview() { return JSON.stringify({ t: 'preview', s: snapshot() }); }
   message() { const c = this.cues; this.cues = []; return JSON.stringify({ t: 'snap', s: snapshot(), c }); }
   // what only one client gets, next to the snapshot: their own character's whole state at this tick (for prediction), and
   // how early their input frames arrive (ia: ticks, the lower tenth of the last two seconds; late / miss: counts)

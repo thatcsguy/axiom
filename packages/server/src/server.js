@@ -16,7 +16,7 @@ const TYPES = { '.js': 'text/javascript; charset=utf-8', '.html': 'text/html; ch
 const SERVED = ['/packages/client/', '/packages/sim/', '/packages/protocol/'];
 
 export function startServer(o = {}) {
-  const root = o.root || ROOT, state = { rooms: new Map(), socks: new Set(), speed: o.speed || 1, intro: o.intro !== false, seed: o.seed, test: !!o.test };
+  const root = o.root || ROOT, state = { rooms: new Map(), socks: new Set(), speed: o.speed || 1, intro: o.intro !== false, seed: o.seed, test: !!o.test, countdown: o.countdown === undefined ? 3 : o.countdown };
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://x'); let p = decodeURIComponent(url.pathname);
     if (p === '/healthz') { res.writeHead(200, { 'Content-Type': 'text/plain' }); return res.end('ok ' + state.rooms.size + ' rooms\n'); }

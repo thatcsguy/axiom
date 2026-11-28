@@ -91,6 +91,9 @@ npm run look -- ../fun-stuff/threshold/src     # re-import Threshold's look (pos
 npm run shots -- shots [dummy|atelier]         # screenshots of the real client against a real server (Playwright)
 node tools/atelier-compare.js ../fun-stuff/threshold/src compare   # Pentimento in Threshold and Axiom, side by side
 npm run atelier -- ../fun-stuff/threshold/src  # re-import Pentimento's look from Threshold (atelier-look.js)
+npm run audio -- ../fun-stuff/threshold/src    # re-import Threshold's sound and the ported fights' music (audio.js)
+npm run controls -- ../fun-stuff/threshold/src # re-import Threshold's settings defaults and bindings (controls.js)
+node tools/soundcheck.js                       # sound, rebinding and volumes in a real browser (THREE_DIR offline)
 TH_GPU=1 npm run shots -- shots-gpu            # the same with your installed Chrome on the graphics card
 node tools/netsim.js --lag 60 --jitter 20 --loss 1   # a bad network as a proxy: open http://localhost:8090/
 node tools/netfeel.js [--repo ../other-checkout]     # two browsers through it: cast bar smoothness, corrections, input delay

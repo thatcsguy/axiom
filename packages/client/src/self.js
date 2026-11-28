@@ -21,6 +21,8 @@ import '../../sim/src/bosses/index.js';
 const lerp = (a, b, t) => a + (b - a) * t, TAU = Math.PI * 2;
 const lerpAng = (a, b, t) => { let d = (b - a) % TAU; if (d > Math.PI) d -= TAU; if (d < -Math.PI) d += TAU; return a + d * t; };
 const SNAP_DIST = 3, FADE = 0.1, IA_WANT = 1.5, MAX_STEPS = 12;
+// a predicted cue and the server's copy of it are matched on this: the cue's name, and for a sound which sound it is
+const cueKey = (name, args) => name === 'sound.sfx' && args ? name + ':' + args[0] : name;
 
 export class SelfSim {
   // o: { net, you, boss, nm, cls, sample: () => frame, cue: (name, args) => void }
@@ -87,13 +89,13 @@ export class SelfSim {
     this.net.send({ t: 'frames', k: t, fs });
     if (this.world) this.setWorld(this.world);
     this.prev = this.cur;
-    this.pred.step(f, (name, args) => { this.pending.push({ name, tick: t }); this.cue(name, args); });
+    this.pred.step(f, (name, args) => { this.pending.push({ name, k: cueKey(name, args), tick: t }); this.cue(name, args); });
     this.cur = this.snap(); this.tick = t;
   }
   // a cue from the server: false when it is the server's copy of one the prediction already played
   keep(c) {
     if (!this.ready || c.actor !== this.you) return true;
-    for (const q of this.pending) if (!q.used && q.name === c.name && Math.abs(q.tick - c.tick) <= 4) { q.used = true; return false; }
+    const k = cueKey(c.name, c.args); for (const q of this.pending) if (!q.used && q.k === k && Math.abs(q.tick - c.tick) <= 4) { q.used = true; return false; }
     return true;
   }
   // what is drawn: the last two predicted ticks blended at the clock, plus the fading correction

@@ -34,7 +34,7 @@ export class Room {
   note(m, text) { this.send(m, { t: 'note', text }); }
   lobbyMsg() {
     return { t: 'lobby', room: this.name, phase: this.phase, enc: this.enc,
-      members: this.members.map((m) => ({ id: m.id, name: m.name, cls: m.cls, bot: !!m.bot, auto: !!m.auto, inFight: !!m.inFight, sim: m.sim || null })) };
+      members: this.members.map((m) => ({ id: m.id, name: m.name, cls: m.cls, bot: !!m.bot, auto: !!m.auto, inFight: !!m.inFight, sim: m.sim || null, loading: !!(this.waitFor && this.waitFor.has(m.id)) })) };
   }
   sync() { this.broadcast(this.lobbyMsg()); }
 
@@ -56,6 +56,7 @@ export class Room {
       if (this.enc.training) this.post({ t: 'leave', key: m.id });
       else { this.post({ t: 'auto', key: m.id, on: true }); } // a boss fight goes on: the autopilot takes the empty seat
     }
+    if (this.waitFor && this.waitFor.delete(m.id)) this.checkLoaded();
     if (!this.humans.length) { this.stopFight(); this.server.rooms.delete(this.name); return; }
     this.sync();
   }
@@ -72,7 +73,8 @@ export class Room {
         if (this.enc.training && m.inFight) { m.cls = msg.cls; this.post({ t: 'swap', key: m.id, cls: msg.cls }); return this.sync(); }
         return this.note(m, 'You can change class in the lobby, or on the training dummy.');
       }
-      case 'start': return this.start(m, msg.boss, !!msg.nm, this.server.test ? msg : null);
+      case 'ready': return this.loaded(m);
+      case 'start': return this.start(m, msg.boss, !!msg.nm, this.server.test ? msg : null, { godMode: !!msg.god, superDmg: !!msg.superDmg });
       case 'test': if (this.server.test && this.phase === 'fight') this.post({ t: 'test', o: msg.o }); return; // tools only
       case 'end': if (this.phase === 'fight') { this.stopFight(); this.broadcast({ t: 'end', result: 'ended', by: m.name, ft: 0, stats: [] }); this.backToLobby(); } return;
       case 'auto': { // the autopilot plays your character; asked in the lobby, it plays from the pull
@@ -91,18 +93,20 @@ export class Room {
   }
 
   // ---- encounters
-  start(m, boss, nm, test) {
+  // opts: the party's testing toggles from the lobby (Threshold's Settings > Testing): godMode (nobody drops below 1 health),
+  // superDmg (a player's hit drops the boss to his next phase)
+  start(m, boss, nm, test, opts = {}) {
     if (this.phase !== 'lobby') return this.note(m, 'An encounter is already running.');
     const def = ENCOUNTERS.includes(boss) && G.bosses.find((d) => d.id === boss); if (!def) return this.note(m, 'Unknown encounter.');
     // a fight for fewer players (Issen is solo for now) takes whoever started it first
     const cap = def.training ? MAX_TRAINING : Math.min(MAX_PARTY, def.maxPlayers || MAX_PARTY), party = (cap < this.members.length ? [m, ...this.members.filter((q) => q !== m)] : this.members).slice(0, cap);
-    this.enc = { boss, name: def.name, nm: nm && !!def.nightmare, training: !!def.training, by: m.name, at: Date.now() };
+    this.enc = { boss, name: def.name, nm: nm && !!def.nightmare, training: !!def.training, by: m.name, at: Date.now(), godMode: !!(opts.godMode || (test && test.god)), superDmg: !!opts.superDmg };
     this.phase = 'fight';
     for (const q of this.members) { q.inFight = party.includes(q); q.sim = null; }
     const w = this.worker = new Worker(WORKER);
     w.on('message', (e) => this.onWorker(w, e));
     w.on('error', (e) => { console.error('fight worker', e); if (this.worker === w) { this.broadcast({ t: 'note', text: 'The fight crashed on the server.' }); this.stopFight(); this.backToLobby(); } });
-    w.postMessage({ t: 'start', speed: this.server.speed, setup: { boss, nm: this.enc.nm, intro: !def.training && this.server.intro && !(test && test.skipIntro), phase: test ? test.phase | 0 : 0, godMode: !!(test && test.god), players: party.map((q) => ({ key: q.id, cls: q.cls, name: q.name, bot: q.bot || q.auto })) }, seed: this.server.seed });
+    w.postMessage({ t: 'start', speed: this.server.speed, setup: { boss, nm: this.enc.nm, intro: !def.training && this.server.intro && !(test && test.skipIntro), phase: test ? test.phase | 0 : 0, godMode: this.enc.godMode, superDmg: this.enc.superDmg, players: party.map((q) => ({ key: q.id, cls: q.cls, name: q.name, bot: q.bot || q.auto })) }, seed: this.server.seed });
     if (this.members.length > party.length) for (const q of this.members) if (!q.inFight) this.note(q, cap === 1 ? `${def.name} is a solo fight for now: you are watching ${m.name || 'them'}.` : `A boss takes ${cap} players: you are watching this one.`);
     this.sync();
   }
@@ -113,9 +117,12 @@ export class Room {
       for (const m of this.members) if (m.sock && m.sock.open && m.sock.buffered < BACKLOG) { const me = own.get(m.id); m.sock.send(me ? head + ',"me":' + me + '}' : e.data); }
     }
     else if (e.t === 'started') {
+      // the ready gate: the fight holds at its first tick until every person in it has loaded it (no timeout: nobody is
+      // left behind), then a short countdown for everyone and it runs. Bots and the autopilot's empty seats do not wait.
       const ids = new Map(e.ids); this.enc.seed = e.seed;
-      for (const m of this.members) { m.sim = ids.get(m.id) || null; this.send(m, { t: 'start', enc: this.enc, you: m.sim, tickHz: e.hz }); }
-      this.sync();
+      this.waitFor = new Set(this.members.filter((q) => q.inFight && !q.bot && q.sock).map((q) => q.id));
+      for (const m of this.members) { m.sim = ids.get(m.id) || null; this.send(m, { t: 'start', enc: this.enc, you: m.sim, tickHz: e.hz, loading: true }); if (m.sock && m.sock.open) m.sock.send(e.preview); }
+      this.sync(); this.checkLoaded();
     } else if (e.t === 'joined') {
       const m = this.members.find((q) => q.id === e.key); if (!m) return; m.sim = e.you;
       this.send(m, { t: 'start', enc: this.enc, you: e.you, tickHz: TICK_HZ }); this.sync();
@@ -126,7 +133,14 @@ export class Room {
       this.stopFight(); this.backToLobby();
     } else if (e.t === 'error') console.error('fight worker:', e.msg);
   }
-  stopFight() { const w = this.worker; this.worker = null; if (w) { w.postMessage({ t: 'stop' }); setTimeout(() => w.terminate(), 200); } }
+  loaded(m) { if (this.waitFor && this.waitFor.delete(m.id)) { this.sync(); this.checkLoaded(); } }
+  checkLoaded() {
+    if (!this.waitFor || this.waitFor.size || !this.worker) return;
+    const w = this.worker, n = this.server.countdown; this.waitFor = null;
+    this.broadcast({ t: 'go', in: n }); this.sync();
+    this.goTimer = setTimeout(() => { if (this.worker === w) w.postMessage({ t: 'go' }); }, n * 1000);
+  }
+  stopFight() { clearTimeout(this.goTimer); this.waitFor = null; const w = this.worker; this.worker = null; if (w) { w.postMessage({ t: 'stop' }); setTimeout(() => w.terminate(), 200); } }
   backToLobby() { this.phase = 'lobby'; this.enc = null; for (const m of this.members) { m.inFight = false; m.sim = null; } this.sync(); }
 }
 

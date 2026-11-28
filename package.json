@@ -21,6 +21,8 @@
     "look": "node tools/import-look.js",
     "atelier": "node tools/import-atelier.js",
     "duelist": "node tools/import-duelist.js",
-    "shots": "node tools/shots.js"
+    "shots": "node tools/shots.js",
+    "audio": "node tools/import-audio.js",
+    "controls": "node tools/import-controls.js"
   }
 }

@@ -6,6 +6,7 @@
 <title>Axiom</title>
 <script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/" } }</script>
 <link rel="stylesheet" href="src/hud.css">
+<link rel="stylesheet" href="src/settings.css">
 <style>
   :root { --bg: #0e0f13; --panel: rgba(18, 19, 25, 0.88); --line: rgba(255, 255, 255, 0.12); --fg: #ece8df; --dim: #9a978f; --gold: #f0c060; --red: #e2513e; --green: #5ac878; }
   * { box-sizing: border-box; }
@@ -19,13 +20,15 @@
   kbd { display: inline-block; min-width: 1.4em; text-align: center; font: 600 11px/1.5 ui-monospace, monospace; padding: 0 4px; border: 1px solid var(--line); border-radius: 4px; background: rgba(255, 255, 255, 0.06); }
   .dim { color: var(--dim); } .small { font-size: 12px; } .tag { font-size: 11px; color: var(--gold); border: 1px solid rgba(240, 192, 96, 0.4); border-radius: 4px; padding: 0 4px; }
   .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 10px; }
+  .pfocus { outline: 2px solid var(--gold); outline-offset: 2px; }
+  #lobby .lhead { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
   .check { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
   [hidden] { display: none !important; }
   /* lobby */
   #lobby { position: fixed; inset: 0; overflow: auto; background: radial-gradient(ellipse at 50% 0%, #2a2318 0%, #0e0f13 70%); padding: 24px 16px 40px; z-index: 5; user-select: text; }
   body[data-phase=fight] #lobby { background: rgba(10, 10, 14, 0.82); }
   #lobby .wrap { max-width: 980px; margin: 0 auto; }
-  #lobby h1 { margin: 0; font-size: 34px; letter-spacing: 0.22em; font-weight: 700; } #lobby h1 + p { margin: 2px 0 18px; }
+  #lobby h1 { margin: 0; font-size: 34px; letter-spacing: 0.22em; font-weight: 700; } #lobby h1 + p, #lobby .lhead + p { margin: 2px 0 18px; }
   #lobby section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-top: 14px; }
   #lobby h3 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--dim); }
   .members { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; } .members li { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
@@ -51,8 +54,10 @@
   #hotbar .slot { pointer-events: auto; cursor: pointer; }
   #plates .plate { position: absolute; left: 0; top: 0; translate: -50% -100%; font-size: 12px; font-weight: 600; text-shadow: 0 1px 3px #000, 0 0 2px #000; white-space: nowrap; } #plates .plate.down { opacity: 0.5; }
   #banner { position: fixed; top: 34%; left: 50%; transform: translate(-50%, -50%); font-size: 54px; font-weight: 800; letter-spacing: 0.2em; text-shadow: 0 2px 12px #000; z-index: 3; pointer-events: none; } #banner.win { color: var(--green); } #banner.dead { color: var(--red); }
+  #banner.wait { font-size: 30px; color: var(--fg); letter-spacing: 0.18em; }
   #toast { position: fixed; left: 50%; top: 70px; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px; z-index: 9; max-width: calc(100vw - 32px); }
   #top { position: fixed; right: 12px; top: 8px; font-size: 12px; color: var(--dim); z-index: 6; display: flex; gap: 10px; text-shadow: 0 1px 2px #000; }
+  #testtag { position: fixed; top: 8px; left: 50%; transform: translateX(-50%); z-index: 3; font-size: 11px; letter-spacing: 0.24em; color: #ff9a6a; text-shadow: 0 1px 3px #000; pointer-events: none; }
   #watching { position: fixed; top: 64px; left: 50%; transform: translateX(-50%); color: var(--gold); z-index: 3; text-shadow: 0 1px 3px #000; }
   #menu { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.5); z-index: 7; display: grid; place-items: center; padding: 16px; }
   #menu .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; width: min(480px, 100%); } #menu h3 { margin: 0 0 8px; letter-spacing: 0.14em; }
@@ -81,10 +86,11 @@
 </div>
 <div id="watching" hidden>Watching: a fight is under way. You will be in the lobby when it ends.</div>
 <div id="banner" hidden></div>
+<div id="testtag" hidden></div>
 <div id="menu" hidden></div>
 <div id="toast" hidden></div>
 <div id="top"><span id="status">Connecting...</span><span id="ping"></span><a href="debug.html" class="dim" style="pointer-events:auto">debug view</a></div>
-<div id="lobby"><div class="wrap"><h1>AXIOM</h1><p class="dim">A co-op raid prototype. Pick a class, then an encounter: everyone in the room goes in together.</p><div id="lobbyBody"></div></div></div>
+<div id="lobby"><div class="wrap"><div class="lhead"><h1>AXIOM</h1><button id="btn-settings">Settings &amp; controls</button></div><p class="dim">A co-op raid prototype. Pick a class, then an encounter: everyone in the room goes in together.</p><div id="lobbyBody"></div></div></div>
 <script type="module" src="src/game.js"></script>
 </body>
 </html>

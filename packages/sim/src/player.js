@@ -39,7 +39,7 @@ export class Player {
   hasBuff(id) { return this.buffs.some((q) => q.id === id && q.t > 0); }
   dropBuff(id) { const i = this.buffs.findIndex((q) => q.id === id); if (i >= 0) this.buffs.splice(i, 1); }
   gain(n) { this.res = clamp(this.res + n, 0, this.resMax); }
-  heal(n) { if (!this.alive) return; const h = Math.min(this.maxHp - this.hp, n); this.hp += h; this.stats.heals += h; FX.num(this.aim(), '+' + Math.round(n), 'heal', this.id); Sound.sfx('heal'); FX.burst(this.pos.x, 0.2, this.pos.z, { n: 30, color: 0x66ffa0, speed: [0.5, 2], up: 4, life: [0.5, 1.1], radius: 0.8 }); FX.pillar(this.pos.x, this.pos.z, { r: 1, h: 6, color: 0x40ff90, dur: 0.7 }); }
+  heal(n) { if (!this.alive) return; const h = Math.min(this.maxHp - this.hp, n); this.hp += h; this.stats.heals += h; FX.num(this.aim(), '+' + Math.round(n), 'heal', this.id); Sound.sfx('heal', 1, 1, this.id); FX.burst(this.pos.x, 0.2, this.pos.z, { n: 30, color: 0x66ffa0, speed: [0.5, 2], up: 4, life: [0.5, 1.1], radius: 0.8 }); FX.pillar(this.pos.x, this.pos.z, { r: 1, h: 6, color: 0x40ff90, dur: 0.7 }); }
   say(text) { this.hint = text; this.hintT = 1.2; }
   inRange(s, t) { if (!s.range) return true; if (!t || !t.alive || !t.targetable) return false; return t.distTo(this.pos.x, this.pos.z) <= s.range + (s.melee ? 0 : 0); }
   // Why can't slot i be used right now? Returns '' when usable.
@@ -97,10 +97,10 @@ export class Player {
     if (o.blockable && this.parryT > 0) { this.parryT = 0; asActor(this, () => this.cls.onParry(this, o)); return 0; } // the riposte is this player's damage
     amt = Math.round(amt * this.dmgTakenMul);
     if (o.kb && o.kb.dist) { const d = 0.38; this.kb = { vx: Math.sin(o.kb.dir) * o.kb.dist / d, vz: Math.cos(o.kb.dir) * o.kb.dist / d, t: d }; this.casting = null; }
-    if (o.blockable && this.shield > 0) { const a = Math.min(this.shield, amt); this.shield -= a; amt -= a; if (this.cls.onAbsorb) this.cls.onAbsorb(this, a); FX.num(this.aim(), 'ABSORB', 'note', this.id); Sound.sfx('shield', 0.8); if (amt <= 0) return 0; }
+    if (o.blockable && this.shield > 0) { const a = Math.min(this.shield, amt); this.shield -= a; amt -= a; if (this.cls.onAbsorb) this.cls.onAbsorb(this, a); FX.num(this.aim(), 'ABSORB', 'note', this.id); Sound.sfx('shield', 0.8, 1, this.id); if (amt <= 0) return 0; }
     this.hp -= amt; this.stats.taken += amt; this.lastHurt = G.now; this.flashT = 0.15;
     if (G.hitLog) G.hitLog.push(G.ft.toFixed(1) + ' ' + (o.src ? (o.src.name || (o.src.shape && o.src.shape.type) || (typeof o.src === 'string' ? o.src : 'bullet')) : '?') + ' ' + amt);
-    if (!o.dot || amt > 40) { Sound.sfx('hurt', o.dot ? 0.5 : 1); FX.shake(Math.min(0.9, amt / 450), this.id); UI.hurtFlash(amt / this.maxHp, this.id); }
+    if (!o.dot || amt > 40) { Sound.sfx('hurt', o.dot ? 0.5 : 1, 1, this.id); FX.shake(Math.min(0.9, amt / 450), this.id); UI.hurtFlash(amt / this.maxHp, this.id); }
     FX.num(this.aim(), '-' + amt, 'hurt', this.id);
     if (this.hp < 1 && G.opts.godMode && !G.rehearsing) { this.hp = 1; G.testUsed = true; } // testing: take every hit, never die
     if (this.hp <= 0) { this.hp = 0; this.die(o.src); }
@@ -114,7 +114,7 @@ export class Player {
   }
   die(src) {
     if (!this.alive) return; this.alive = false; this.casting = null; this.deathT = 0; this.deathSrc = src;
-    Sound.sfx('death'); FX.burst(this.pos.x, 1, this.pos.z, { n: 40, color: this.cls.color, speed: [1, 6], life: [0.6, 1.6], up: 2 });
+    Sound.sfx('death', 1, 1, this.id); FX.burst(this.pos.x, 1, this.pos.z, { n: 40, color: this.cls.color, speed: [1, 6], life: [0.6, 1.6], up: 2 });
     onDead(this);
   }
   cycleTarget(dir = 1) {

@@ -157,13 +157,34 @@ Patrick's ask (2026-11-27): make it feel client-controlled. What the client does
   rewind). The Stormcaller's next glowing Static slot is drawn from the fight's RNG, so after a Discharge the prediction
   may show the wrong "next" pip for one round trip.
 
+## Sound, settings and the ready gate
+
+- **Sound is Threshold's**, imported unchanged by `tools/import-audio.js` into `client/src/audio.js` (03_audio.js: every
+  synthesised effect, the reverb, the step sequencer and its voices; and Issen's and Pentimento's music, Normal and
+  Nightmare). The sim's `Sound.*` / `Music.*` calls were already cues; the server now sends them, and `client/src/sound.js`
+  plays them when the drawing reaches their tick. Your own skills' sounds come from the prediction the moment you press
+  (the server's copy is dropped: `self.js` matches them by cue and sound name). The look halves (`duelist-look.js`,
+  `atelier-look.js`) play their own sounds as in Threshold (a cut landing, the kill). Music starts with the fight at
+  level 0 and follows the phases; someone who joins mid-fight starts at the phase's level. Several players: another
+  player's sounds play at 45% and their hurt and target-cycle clicks not at all (`player.js` names the player a hurt,
+  heal, absorb or death sound is about). `tools/soundcheck.js` checks all of this in a browser.
+- **Settings** (lobby button, or Esc then Settings & controls) are Threshold's screen: master and music volume, mouse
+  sensitivity, controller camera speed, character height, invert Y, graphics, the controller switch and Xbox /
+  PlayStation prompts, and remapping (two keys per action, mouse side buttons, one pad button; a taken key swaps).
+  Saved in `axiom_settings`. `tools/import-controls.js` copies Threshold's Binds into `client/src/controls.js`; game.js
+  reads the keyboard, mouse and controller through it (the controller code is Threshold's 02_input.js poll). The mouse
+  now turns at Threshold's rate (0.0026 rad per pixel at 100%; Axiom's old fixed rate was about twice that).
+  Testing: the freeze log copy is in Settings; God mode and Super damage are lobby checkboxes that apply to the whole
+  party's next fight (a tag shows in the fight).
+- **The ready gate**: a fight is set up and holds at its first tick until every person in it says their client has
+  built the arena and warmed its shaders (`ready`); then everyone gets a 3 s countdown and it runs. There is no
+  timeout: nobody is left behind (anyone can still end it from the Esc menu). Bots and watchers do not hold it.
+
 ## The boundary (what is not done)
 
 - **Prediction is your own character only.** Telegraphs and bullets are drawn in the past with the rest of the world;
   the plan's "announce hazards with their fire tick and draw them on the predicted clock" is not done.
 - **Only Duskblade and Stormcaller** are offered in the lobby. Ashwarden and Hexslinger are still in the sim.
-- **No sound or music.** Sound cues arrive and are dropped.
-- **No quality setting in the menu.** `?quality=high|med|low` picks Threshold's quality table entry.
 - **JSON snapshots, full every tick.** Deltas or a binary format would cut bandwidth about tenfold when it matters.
 - **Two fights.** The other 17 bosses are not ported. Issen is solo: his co-op version comes later. `docs/porting.md` says how.
 - **Issen's Niten entry differs from Threshold's headless tools**: Threshold played that cinematic only with a screen, so
@@ -193,4 +214,4 @@ Cuts) and wins some Nightmare runs: he is a hard duel.
 1. Play it with real people over the internet (Fly.io or Render) and collect what feels wrong: input delay, camera,
    readability of Pentimento's paint at a distance.
 2. Feel it on a real line (Fly.io or Render) with the F3 overlay on; tune the render delay and lead limits from that.
-3. Pentimento's sound from Threshold, then mechanic tweaks for parties.
+3. Mechanic tweaks for parties.

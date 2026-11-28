@@ -8,7 +8,7 @@ import { fakeClient } from '../tools/fake-client.js';
 import { Predictor } from './_sim.js';
 
 let srv, base;
-before(async () => { srv = await startServer({ port: 0, host: '127.0.0.1', seed: 2 }); base = `ws://127.0.0.1:${srv.port}/ws`; });
+before(async () => { srv = await startServer({ port: 0, countdown: 0, host: '127.0.0.1', seed: 2 }); base = `ws://127.0.0.1:${srv.port}/ws`; });
 after(async () => { await srv.close(); });
 
 test('tick-stamped frames: the server steps exactly the predicted character, and only its owner gets its state', async () => {

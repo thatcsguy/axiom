@@ -2,6 +2,7 @@
 // change the look in Threshold and re-run the tool. duelist.js drives this from snapshots and cues.
 import { THREE, G, W, FX, Cam, Post, scene, camera, renderer } from './look.js';
 import { buildHero } from './heroes.js';
+import { Sound } from './audio.js'; // the sounds the view half plays itself (a cut landing, the kill)
 
 const TAU = Math.PI * 2, PI = Math.PI, V3 = THREE.Vector3;
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v, lerp = (a, b, t) => a + (b - a) * t, sat = (v) => clamp(v, 0, 1);
@@ -9,8 +10,6 @@ const smooth = (t) => { t = sat(t); return t * t * (3 - 2 * t); }, damp = (a, b,
 const wrapPi = (a) => { a = (a + PI) % TAU; if (a < 0) a += TAU; return a - PI; }, angDiff = (a, b) => wrapPi(b - a);
 const vrand = Math.random;
 function mulberry(seed) { let a = seed >>> 0; return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
-// sound is not played in Axiom yet
-const Sound = { sfx() { } };
 // the reflection's fight body: the rules are on the server, so here it is only what build() and the look read
 class Ent { constructor(o = {}) { this.name = o.name || ''; this.hp = this.maxHp = o.hp || 1; this.radius = o.radius || 1; this.aimY = o.aimY || 1.5; this.pos = new V3(); this.facing = 0; this.alive = true; this.targetable = true; this.immune = false; this.castState = null; this.dmgTaken = 1; } }
 // the petals the orbs are drawn for: filled from the snapshot's bullets by duelist.js each frame

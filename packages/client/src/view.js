@@ -15,6 +15,7 @@ import {
 import { buildHero, HeroClock } from './heroes.js';
 import { AtelierView, ATELIER_POST, ATELIER_NM_POST } from './atelier.js';
 import { DuelistView, DUELIST_POST, DUELIST_NM_POST } from './duelist.js';
+import { FightSound } from './sound.js';
 
 const TAU = Math.PI * 2, PI = Math.PI, V3 = THREE.Vector3;
 const lerp = (a, b, t) => a + (b - a) * t, clamp = (v, a, b) => v < a ? a : v > b ? b : v, sat = (v) => clamp(v, 0, 1);
@@ -217,6 +218,7 @@ export class View {
     const ow = OWN[name];
     if (ow !== undefined) { const who = args[ow] !== undefined && args[ow] !== null ? args[ow] : actor; if (who !== null && who !== undefined && who !== you) return; }
     if (name.startsWith('fx.')) return fxCue(name.slice(3), args);
+    if (name.startsWith('sound.') || name.startsWith('music.')) return FightSound.cue(name, args, actor, you);
     if (name.startsWith('duelist.')) { if (this.duel) this.duel.cue(name, args); return; }
     switch (name) {
       case 'atelier.lay': if (this.atl) this.atl.lay(args[0]); return;

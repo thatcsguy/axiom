@@ -12,6 +12,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { Settings, saveSettings } from './controls.js'; // graphics quality and character height (the Settings screen)
 
 // ---------------- prelude: what the Threshold code below reads
 const QS = new URLSearchParams(location.search);
@@ -24,8 +25,6 @@ const angTo = (x0, z0, x1, z1) => Math.atan2(x1 - x0, z1 - z0);
 const vrand = Math.random; // cosmetic only: nothing here reaches the sim
 // G: the client's own clocks and the stand-ins the camera reads. headless is always false here (the sim never draws).
 const G = { now: 0, ft: 0, rt: 0, dt: 0, rdt: 0, state: 'fight', headless: false, nightmare: false, player: null, boss: null, arena: null, errors: [], warmStats: null, keepDisposed: null };
-const Settings = { q: (() => { try { return localStorage.getItem('axiom_quality') || 'high'; } catch (e) { return 'high'; } })(), camY: 50 };
-if (QS.get('quality')) Settings.q = QS.get('quality');
 const Input = { lookX: 0, lookY: 0, zoom: 0 };
 const Hooks = { step: [], frame: [] };
 const Game = { def: null };
@@ -1116,7 +1115,7 @@ function frame(rdt) {
   Input.lookX = Input.lookY = Input.zoom = 0;
   return dt;
 }
-function setQuality(name) { if (!QUALITY[name]) return; Settings.q = name; try { localStorage.setItem('axiom_quality', name); } catch (e) { /* private mode */ } Post.setQuality(name); }
+function setQuality(name) { if (!QUALITY[name]) return; Settings.q = name; saveSettings(); Post.setQuality(name); }
 
 export { THREE, G, Settings, Input, Hooks, Game, Hz, Co, QS, renderer, scene, camera, QUALITY, Post, FX, Cam, W, Warm, Hitch, SHADER_GUARD, disposeTree,
   HZ_VERT, HZ_FRAG, BUL_V, BUL_F, ICON, scPipCls, frame, hitstop, setQuality };

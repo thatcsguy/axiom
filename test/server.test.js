@@ -6,7 +6,7 @@ import { startServer } from '../packages/server/src/server.js';
 import { fakeClient } from '../tools/fake-client.js';
 
 let srv, base;
-before(async () => { srv = await startServer({ port: 0, speed: 20, host: '127.0.0.1', seed: 1 }); base = `ws://127.0.0.1:${srv.port}/ws`; });
+before(async () => { srv = await startServer({ port: 0, countdown: 0, speed: 20, host: '127.0.0.1', seed: 1 }); base = `ws://127.0.0.1:${srv.port}/ws`; });
 after(async () => { await srv.close(); });
 
 const lobbyOf = (c) => [...c.msgs].reverse().find((m) => m.t === 'lobby');
@@ -97,7 +97,7 @@ test('Issen is solo for now: whoever starts him fights, the rest of the room wat
 test('a newcomer to Pentimento gets the paint already down (the catch-up); test hooks are off on a real server', async () => {
   const url = base + '?room=boss3', a = await fakeClient(url, { name: 'Ann', cls: 'stormcaller', auto: true });
   await a.until((q) => lobbyOf(q) && lobbyOf(q).members.length === 1);
-  a.send({ t: 'start', boss: 'atelier', phase: 2, god: true, skipIntro: true }); // ignored: this server was not started with test
+  a.send({ t: 'start', boss: 'atelier', phase: 2, god: true, skipIntro: true }); // phase and skipIntro ignored: this server was not started with test (god is the lobby's God mode now)
   await a.until((q) => q.snap && q.snap.s.state === 'fight' && q.snap.s.boss.pub.strokes >= 12, 30000);
   assert.equal(a.snap.s.boss.phase, 0, 'a real server ignores the start-at-phase hook');
   a.send({ t: 'test', o: { kill: true } }); // ignored too
@@ -127,4 +127,25 @@ test('fake players that play from snapshots alone drive their characters through
   a.send({ t: 'end' });
   await a.until((q) => q.msgs.some((m) => m.t === 'end'));
   closeAll(a, b, c);
+});
+
+test('the ready gate: a boss holds at its first tick until every player has loaded it, then runs (no timeout)', async () => {
+  const url = base + '?room=gate1', a = await fakeClient(url, { name: 'Ann', auto: true }), b = await fakeClient(url, { name: 'Bob', auto: true, noReady: true });
+  await a.until((c) => lobbyOf(c) && lobbyOf(c).members.length === 2);
+  a.send({ t: 'start', boss: 'atelier' });
+  await a.until((c) => c.msgs.some((m) => m.t === 'start' && m.loading) && c.msgs.some((m) => m.t === 'preview'));
+  const pv = a.msgs.find((m) => m.t === 'preview');
+  assert.equal(pv.s.boss.id, 'atelier', 'the first moment comes to build the arena from');
+  const l = await a.until((c) => { const q = lobbyOf(c); return q && q.members.find((m) => m.name === 'Bob' && m.loading) && q; });
+  assert.ok(!l.members.find((m) => m.name === 'Ann').loading, 'Ann is loaded; Bob is still loading');
+  await new Promise((r) => setTimeout(r, 1500));
+  assert.equal(a.snaps, 0, 'nothing runs while Bob loads');
+  assert.ok(!a.msgs.some((m) => m.t === 'go'));
+  b.send({ t: 'ready' });
+  const go = await a.until((c) => c.msgs.find((m) => m.t === 'go'));
+  assert.equal(go.in, 0, 'the countdown (0 on this test server)');
+  await a.until((c) => c.snap && c.snap.s.state === 'fight' && c.snap.s.tick > 5);
+  await b.until((c) => c.snap && c.snap.s.tick > 5);
+  a.send({ t: 'end' }); await a.until((c) => c.msgs.some((m) => m.t === 'end'));
+  closeAll(a, b);
 });

@@ -25,7 +25,7 @@ export function fakeClient(url, o = {}) {
         return;
       }
       c.msgs.push(m);
-      if (m.t === 'start') c.you = m.you;
+      if (m.t === 'start') { c.you = m.you; if (m.loading && m.you && !o.noReady) c.send({ t: 'ready' }); } // loaded at once (o.noReady: never, for the ready gate's test)
       if (m.t === 'end') c.you = null;
     };
   });
